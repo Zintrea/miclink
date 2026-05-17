@@ -10,8 +10,11 @@ Run with --list-devices to see available audio output devices.
 
 import asyncio
 import argparse
+import os
 import sys
 import signal
+
+from dotenv import load_dotenv
 
 import websockets
 import pyaudio
@@ -46,7 +49,7 @@ RATE = 48000        # Studio quality sample rate
 
 
 class AudioServer:
-    def __init__(self, device_index=None, host="0.0.0.0", port=8765):
+    def __init__(self, host="0.0.0.0", port=8765, device_index=None):
         self.host = host
         self.port = port
         self.device_index = device_index
@@ -125,20 +128,35 @@ class AudioServer:
 
 
 def main():
+    load_dotenv()
+
+    host_default = os.getenv("HOST", "0.0.0.0")
+    port_default = int(os.getenv("PORT", "8765"))
+    device_index_default = (
+        int(os.getenv("DEVICE_INDEX")) if os.getenv("DEVICE_INDEX") else None
+    )
+    device_name_default = os.getenv("DEVICE_NAME", "")
+
     parser = argparse.ArgumentParser(description="miclink — mobile mic audio server")
-    parser.add_argument("--port", type=int, default=8765, help="WebSocket port (default: 8765)")
-    parser.add_argument("--device", type=int, default=None, help="Output device index")
-    parser.add_argument("--list-devices", action="store_true", help="List available output devices and exit")
-    parser.add_argument("--find-device", type=str, default=None, help="Find device by name substring")
+    parser.add_argument("--host", type=str, default=host_default,
+                        help=f"Host interface (default: {host_default})")
+    parser.add_argument("--port", type=int, default=port_default,
+                        help=f"WebSocket port (default: {port_default})")
+    parser.add_argument("--device", type=int, default=device_index_default,
+                        help="Output device index")
+    parser.add_argument("--list-devices", action="store_true",
+                        help="List available output devices and exit")
+    parser.add_argument("--find-device", type=str, default=None,
+                        help="Find device by name substring")
     args = parser.parse_args()
 
     if args.list_devices:
         list_devices()
         return
 
-    p = pyaudio.PyAudio()
-
+    # Handle --find-device (explicit CLI request)
     if args.find_device:
+        p = pyaudio.PyAudio()
         idx = find_device_by_name(p, args.find_device)
         if idx is not None:
             print(f"Found: [{idx}] {p.get_device_info_by_index(idx)['name']}")
@@ -147,9 +165,19 @@ def main():
         p.terminate()
         return
 
-    p.terminate()
+    # If --device not given but DEVICE_NAME is set in .env, auto-detect
+    device_index = args.device
+    if device_index is None and device_name_default:
+        p = pyaudio.PyAudio()
+        idx = find_device_by_name(p, device_name_default)
+        p.terminate()
+        if idx is not None:
+            device_index = idx
+            print(f"  🔍 Auto-detected device [{idx}]: {device_name_default}")
+        else:
+            print(f"  ⚠️  Device '{device_name_default}' not found — using default output")
 
-    server = AudioServer(device_index=args.device, port=args.port)
+    server = AudioServer(host=args.host, port=args.port, device_index=device_index)
     try:
         asyncio.run(server.start())
     except KeyboardInterrupt:

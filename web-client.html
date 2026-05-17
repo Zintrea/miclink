@@ -185,25 +185,49 @@
             }
 
             // --- WebSocket + Audio ---
+            function parseServerAddress(input) {
+                // Accept: "IP", "IP:PORT", "ws://IP:PORT", "ws://IP"
+                let ip = input;
+                let port = 8765;
+
+                // Strip ws:// prefix
+                ip = ip.replace(/^ws:\/\//i, '');
+                // Strip trailing port if present
+                const portMatch = ip.match(/^(.*):(\d+)$/);
+                if (portMatch) {
+                    ip = portMatch[1];
+                    port = parseInt(portMatch[2], 10);
+                }
+
+                // Validate IP format
+                if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+                    return null;
+                }
+
+                return { ip, port };
+            }
+
             function startStreaming() {
-                const ip = ipInput.value.trim();
-                if (!ip) {
+                const raw = ipInput.value.trim();
+                if (!raw) {
                     showError('Please enter the server IP address');
                     return;
                 }
-                if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
-                    showError('Invalid IP format (e.g. 192.168.1.100)');
+
+                const addr = parseServerAddress(raw);
+                if (!addr) {
+                    showError('Invalid IP format (e.g. 192.168.1.100 or 172.20.10.2:8765)');
                     return;
                 }
 
                 // Save for next time
-                localStorage.setItem('miclink-server-ip', ip);
+                localStorage.setItem('miclink-server-ip', raw);
 
                 setStatus('Connecting...');
                 btn.disabled = true;
                 btn.textContent = 'Connecting...';
 
-                const wsUrl = `ws://${ip}:8765`;
+                const wsUrl = `ws://${addr.ip}:${addr.port}`;
                 socket = new WebSocket(wsUrl);
 
                 socket.onopen = async () => {

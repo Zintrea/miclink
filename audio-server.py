@@ -17,6 +17,7 @@ import sys
 import signal
 import ssl
 import mimetypes
+import wave
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -65,6 +66,8 @@ class AudioServer:
         self.p = pyaudio.PyAudio()
         self.stream = None
         self.rate = RATE
+        self.record_path = None
+        self.record_wav = None  # WAV file for --record diagnostics
         self.clients = set()
 
     def open_stream(self):
@@ -112,6 +115,14 @@ class AudioServer:
                             self.open_stream()
                         else:
                             print(f"  ✅ Playback at {self.rate} Hz (no change needed)")
+
+                        # Open WAV recording if --record is set (after we know the rate)
+                        if self.record_wav is None and hasattr(self, 'record_path') and self.record_path:
+                            self.record_wav = wave.open(self.record_path, 'wb')
+                            self.record_wav.setnchannels(CHANNELS)
+                            self.record_wav.setsampwidth(2)  # 16-bit = 2 bytes
+                            self.record_wav.setframerate(self.rate)
+                            print(f"  🎙️  Recording to {self.record_path} ({self.rate} Hz)")
                     except json.JSONDecodeError:
                         pass
                     metadata_received = True
@@ -120,9 +131,15 @@ class AudioServer:
                 # Binary message: PCM16 audio data
                 if isinstance(message, bytes):
                     self.stream.write(message)
+                    if self.record_wav is not None:
+                        self.record_wav.writeframes(message)
         except websockets.exceptions.ConnectionClosed:
             print(f"❌ Disconnected: {addr}")
         finally:
+            if self.record_wav is not None:
+                self.record_wav.close()
+                print(f"  💾 Recording saved: {self.record_path}")
+                self.record_wav = None
             self.clients.discard(websocket)
 
     async def handle_http_request(self, connection, request):
@@ -235,6 +252,8 @@ def main():
                         help="Path to SSL key file (default: certs/server.key)")
     parser.add_argument("--https-port", type=int, default=8443,
                         help="Port for HTTPS/WSS in --secure mode (default: 8443)")
+    parser.add_argument("--record", type=str, default=None,
+                        help="Save incoming audio to WAV file for diagnostics (e.g. diag.wav)")
     args = parser.parse_args()
 
     if args.list_devices:
@@ -297,6 +316,7 @@ def main():
         ssl_context=ssl_context,
         web_dir=web_dir,
     )
+    server.record_path = args.record
     try:
         asyncio.run(server.start())
     except KeyboardInterrupt:

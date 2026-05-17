@@ -48,10 +48,27 @@ def find_device_by_name(p, name_substring):
     return None
 
 
+def mono_to_stereo(mono_bytes):
+    """Convert mono PCM16 bytes to interleaved stereo PCM16.
+    
+    VB-Cable (device 27) produces garbled audio with mono output
+    at 48000 Hz. Sending native stereo (L/R duplicate) fixes it.
+    """
+    result = bytearray(len(mono_bytes) * 2)
+    for i in range(0, len(mono_bytes), 2):
+        # Duplicate each 16-bit sample to L and R channels
+        result[i * 2] = mono_bytes[i]       # L low byte
+        result[i * 2 + 1] = mono_bytes[i + 1]  # L high byte
+        result[i * 2 + 2] = mono_bytes[i]      # R low byte
+        result[i * 2 + 3] = mono_bytes[i + 1]  # R high byte
+    return bytes(result)
+
+
 # Audio settings
 CHUNK = 2048        # Buffer size — higher = more stable, lower = less latency
 FORMAT = pyaudio.paInt16
-CHANNELS = 1
+CHANNELS = 1        # Input from client (mono)
+OUTPUT_CHANNELS = 2 # Output to device (stereo — VB-Cable needs this!)
 RATE = 48000        # Studio quality sample rate
 
 
@@ -85,12 +102,12 @@ class AudioServer:
 
         self.stream = self.p.open(
             format=FORMAT,
-            channels=CHANNELS,
+            channels=OUTPUT_CHANNELS,
             rate=self.rate,
             output=True,
             **device_kwargs,
         )
-        print(f"  Stream ready — {self.rate} Hz, {CHANNELS} ch, PCM16")
+        print(f"  Stream ready — {self.rate} Hz, {OUTPUT_CHANNELS} ch (stereo), PCM16")
 
     async def handle_client(self, websocket):
         """Handle one connected client (iPad/phone browser)."""
@@ -130,9 +147,11 @@ class AudioServer:
 
                 # Binary message: PCM16 audio data
                 if isinstance(message, bytes):
-                    self.stream.write(message)
+                    # Convert mono → stereo (VB-Cable needs native stereo)
+                    stereo_data = mono_to_stereo(message)
+                    self.stream.write(stereo_data)
                     if self.record_wav is not None:
-                        self.record_wav.writeframes(message)
+                        self.record_wav.writeframes(message)  # save original mono
         except websockets.exceptions.ConnectionClosed:
             print(f"❌ Disconnected: {addr}")
         finally:
@@ -186,7 +205,7 @@ class AudioServer:
         print("=" * 50)
         print(f"  Host: {self.host}")
         print(f"  Port: {self.port} ({proto})")
-        print(f"  Audio: {RATE} Hz, {CHANNELS} ch, PCM16")
+        print(f"  Audio: {RATE} Hz, {OUTPUT_CHANNELS} ch (stereo), PCM16")
         self.open_stream()
 
         stop = asyncio.Future()

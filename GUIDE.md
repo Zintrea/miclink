@@ -326,6 +326,66 @@ python audio-server.py --port 9000 --device 2
 
 กด `Ctrl + C` ในหน้าต่าง Command Prompt — server จะปิดเองอย่างเรียบร้อย
 
+## 7.4 🔒 โหมด Secure (HTTPS + WSS) — ใช้กับ iOS โดยเฉพาะ
+
+ถ้า `getUserMedia()` ไม่แสดง pop-up ให้ Allow ไมค์บน iPad (เพราะ iOS บังคับ HTTPS) — ให้ใช้โหมดนี้
+
+### 7.4.1 Generate Certificate (ทำครั้งแรกครั้งเดียว)
+
+```cmd
+cd C:\Host\02 Projects\08 miclink
+python certs\gen-cert.py
+```
+
+หรือ (WSL):
+```bash
+cd "/mnt/c/Host/02 Projects/08 miclink"
+python3 certs/gen-cert.py
+```
+
+จะได้ไฟล์:
+- `certs/server.pem` — ใช้เป็น SSL certificate + private key
+- `certs/server.crt` — สำหรับติดตั้งบน iPad (ถ้าต้องการ)
+
+### 7.4.2 รัน Server แบบ Secure
+
+```cmd
+python audio-server.py --secure
+```
+
+หรือรันพร้อมกำหนด device:
+```cmd
+python audio-server.py --secure --device 27
+```
+
+คุณจะเห็น:
+```
+  🔒 SSL: certs\server.pem
+  🌍 HTTPS: https://0.0.0.0:8443/web-client.html
+  🌐 WebSocket: wss://0.0.0.0:8765
+```
+
+### 7.4.3 เชื่อมต่อจาก iPad
+
+1. บน iPad เปิด Safari → ไปที่ `https://172.20.10.2:8443/web-client.html`
+2. Safari จะเตือนว่า certificate ไม่น่าเชื่อถือ (self-signed) — กด **Show Details**
+3. กด **Visit This Website** (หรือ tap ลิงค์)
+4. ใส่ IP: `172.20.10.2`
+5. กด **Start Microphone**
+6. ✅ **iOS ควรขึ้น pop-up ถาม Allow แล้ว!**
+
+> ⚠️ คำเตือน cert warning จะขึ้นแค่ครั้งแรก หลังจาก accept แล้วจะไม่ขึ้นอีก
+
+### 7.4.4 พอร์ตที่ใช้
+
+| พอร์ต | โปรโตคอล | ใช้ทำอะไร |
+|-------|----------|----------|
+| 8443 | HTTPS | เปิดหน้าเว็บบน iPad |
+| 8765 | WSS | ส่งเสียงแบบเข้ารหัส |
+
+> 💡 ถ้าพอร์ต 8443 ชนกับโปรแกรมอื่น ก็เปลี่ยนได้:
+> `python audio-server.py --secure --https-port 9443`
+
 ---
 
 ## 8. การเชื่อมต่อจาก iPad หรือมือถือ
@@ -457,6 +517,8 @@ python audio-server.py --find-device "Speakers"
 | ❌ `สะดุด / กระตุก` | WiFi ไม่เสถียร หรือ CHUNK_SIZE เล็กไป | ใช้ 5GHz WiFi หรือเพิ่ม `CHUNK_SIZE=4096` |
 | ❌ `Discord ไม่เห็น CABLE Input` | (1) VB-Cable ไม่ได้ติดตั้ง<br>(2) ยังไม่ได้เลือกใน Discord Settings | (1) ติดตั้ง VB-Cable + Restart<br>(2) Discord Settings → Voice & Video → Input Device → CABLE Input |
 | ❌ `Discord เห็น CABLE Input แต่ไม่มีเสียง` | Server ยังไม่ได้รัน หรือมือถือยังไม่ Connect | ดูที่ console server — ต้องเห็น `📱 Connected:` |
+| ❌ **iOS ไม่ขึ้น pop-up Allow ไมค์** | iOS บังคับ HTTPS — HTTP ไม่ทำงาน | ใช้ `--secure` แล้วเปิด `https://IP:8443/web-client.html` |
+| ❌ `Safari: "Cannot Verify Identity"` | Self-signed cert ปกติที่ต้อง accept | กด Show Details → Visit This Website |
 | ❌ `Server ปิดไม่ลง` | Windows ตีความ Ctrl+C ไม่ปกติ | กด Ctrl+C ซ้ำ หรือปิดหน้าต่าง Command Prompt |
 | ❌ `--list-devices ไม่เจอ CABLE` | ยังไม่ได้ Restart หลังติดตั้ง VB-Cable | Restart คอม แล้วลองใหม่ |
 | ❌ `WebSocket Connection Failed` | ใส่ IP หรือ Port ผิด | เช็ค IP คอม (ใช้ `ipconfig`) และ Port (ใน `.env` หรือ `--port`) |

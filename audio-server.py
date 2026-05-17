@@ -13,6 +13,11 @@ import argparse
 import os
 import sys
 import signal
+import ssl
+import http.server
+import threading
+import mimetypes
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -49,10 +54,11 @@ RATE = 48000        # Studio quality sample rate
 
 
 class AudioServer:
-    def __init__(self, host="0.0.0.0", port=8765, device_index=None):
+    def __init__(self, host="0.0.0.0", port=8765, device_index=None, ssl_context=None):
         self.host = host
         self.port = port
         self.device_index = device_index
+        self.ssl_context = ssl_context
         self.p = pyaudio.PyAudio()
         self.stream = None
         self.clients = set()
@@ -96,19 +102,25 @@ class AudioServer:
 
     async def start(self):
         """Start the WebSocket server."""
+        proto = "wss" if self.ssl_context else "ws"
         print("\n" + "=" * 50)
         print("  🎙️  miclink — High-Quality Audio Server")
         print("=" * 50)
         print(f"  Host: {self.host}")
-        print(f"  Port: {self.port}")
+        print(f"  Port: {self.port} ({proto})")
         print(f"  Audio: {RATE} Hz, {CHANNELS} ch, PCM16")
         self.open_stream()
 
         stop = asyncio.Future()
 
         async def server():
-            async with websockets.serve(self.handle_client, self.host, self.port):
-                print(f"\n  🌐 WebSocket: ws://{self.host}:{self.port}")
+            kwargs = dict(ws_handler=self.handle_client, host=self.host, port=self.port)
+            if self.ssl_context:
+                kwargs["ssl"] = self.ssl_context
+            async with websockets.serve(**kwargs):
+                print(f"\n  🌐 WebSocket: {proto}://{self.host}:{self.port}")
+                if self.ssl_context:
+                    print("  🔒 Secure mode — iPad needs to accept self-signed cert")
                 print("  💡 Open web-client.html on your iPad/phone and connect!\n")
                 await stop  # run forever
 
@@ -152,6 +164,14 @@ def main():
                         help="List available output devices and exit")
     parser.add_argument("--find-device", type=str, default=None,
                         help="Find device by name substring")
+    parser.add_argument("--secure", action="store_true",
+                        help="Enable HTTPS/WSS (generate cert first via certs/gen-cert.py)")
+    parser.add_argument("--cert", type=str, default=None,
+                        help="Path to SSL cert PEM file (default: certs/server.pem)")
+    parser.add_argument("--key", type=str, default=None,
+                        help="Path to SSL key file (default: certs/server.key)")
+    parser.add_argument("--https-port", type=int, default=8443,
+                        help="HTTPS port for web-client (default: 8443)")
     args = parser.parse_args()
 
     if args.list_devices:
@@ -170,6 +190,50 @@ def main():
         return
 
     # If --device not given but DEVICE_NAME is set in .env, auto-detect
+    # Setup SSL if --secure is used
+    ssl_context = None
+    if args.secure:
+        script_dir = Path(__file__).parent
+        cert_path = Path(args.cert) if args.cert else script_dir / "certs" / "server.pem"
+        key_path = Path(args.key) if args.key else script_dir / "certs" / "server.key"
+
+        if not cert_path.exists():
+            print(f"❌ Certificate not found: {cert_path}")
+            print("   Run: python certs/gen-cert.py")
+            return
+
+        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        ssl_context.load_cert_chain(str(cert_path), str(key_path))
+        print(f"  🔒 SSL: {cert_path}")
+
+        # Start HTTPS server for web-client.html in a background thread
+        web_dir = script_dir
+        https_port = args.https_port
+
+        class QuietHandler(http.server.SimpleHTTPRequestHandler):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, directory=str(web_dir), **kw)
+
+            def log_message(self, format, *args):
+                pass  # Suppress HTTP log noise
+
+        https_server = http.server.HTTPServer((args.host, https_port), QuietHandler)
+        https_server.socket = ssl_context.wrap_socket(
+            https_server.socket, server_side=True
+        )
+
+        def run_https():
+            try:
+                https_server.serve_forever()
+            except OSError:
+                pass  # Port already in use — ignore
+
+        t = threading.Thread(target=run_https, daemon=True)
+        t.start()
+        print(f"  🌍 HTTPS: https://{args.host}:{https_port}/web-client.html")
+        print(f"  📱 Open on iPad: https://<YOUR_IP>:{https_port}/web-client.html")
+        print()
+
     device_index = args.device
     if device_index is None and device_name_default:
         p = pyaudio.PyAudio()
@@ -181,7 +245,7 @@ def main():
         else:
             print(f"  ⚠️  Device '{device_name_default}' not found — using default output")
 
-    server = AudioServer(host=args.host, port=args.port, device_index=device_index)
+    server = AudioServer(host=args.host, port=args.port, device_index=device_index, ssl_context=ssl_context)
     try:
         asyncio.run(server.start())
     except KeyboardInterrupt:

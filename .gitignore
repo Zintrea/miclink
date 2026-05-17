@@ -21,6 +21,11 @@ Thumbs.db
 # Environment
 .env
 
+# SSL certs (regenerate per machine)
+certs/*.key
+certs/*.pem
+certs/*.crt
+
 # Project specific
 *.wav
 *.mp3

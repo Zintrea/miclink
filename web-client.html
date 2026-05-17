@@ -262,7 +262,9 @@
                         setStatus('Connecting...');
                         btn.textContent = 'Connecting...';
 
-                        const wsUrl = `ws://${addr.ip}:${addr.port}`;
+                        // Auto-detect: use WSS if page is HTTPS (iOS requirement)
+                        const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+                        const wsUrl = `${wsProto}://${addr.ip}:${addr.port}`;
                         socket = new WebSocket(wsUrl);
 
                         let totalBytes = 0;

@@ -284,6 +284,9 @@
                         const startTime = Date.now();
 
                         socket.onopen = () => {
+                            // Send sample rate to server first (critical for sync!)
+                            socket.send(JSON.stringify({ sample_rate: actualRate }));
+
                             setStatus('Connected — streaming...', 'connected');
                             isStreaming = true;
                             btn.textContent = 'Stop Streaming';

@@ -11,6 +11,7 @@ Run with --list-devices to see available audio output devices.
 
 import asyncio
 import argparse
+import json
 import os
 import sys
 import signal
@@ -63,6 +64,7 @@ class AudioServer:
         self.web_dir = Path(web_dir) if web_dir else Path.cwd()
         self.p = pyaudio.PyAudio()
         self.stream = None
+        self.rate = RATE
         self.clients = set()
 
     def open_stream(self):
@@ -81,11 +83,11 @@ class AudioServer:
         self.stream = self.p.open(
             format=FORMAT,
             channels=CHANNELS,
-            rate=RATE,
+            rate=self.rate,
             output=True,
             **device_kwargs,
         )
-        print("  Stream ready — waiting for connections...")
+        print(f"  Stream ready — {self.rate} Hz, {CHANNELS} ch, PCM16")
 
     async def handle_client(self, websocket):
         """Handle one connected client (iPad/phone browser)."""
@@ -93,8 +95,26 @@ class AudioServer:
         print(f"\n📱 Connected: {addr}")
         self.clients.add(websocket)
 
+        metadata_received = False
+
         try:
             async for message in websocket:
+                # First text message: metadata (sample rate, etc.)
+                if not metadata_received and isinstance(message, str):
+                    try:
+                        info = json.loads(message)
+                        new_rate = info.get("sample_rate")
+                        if new_rate and new_rate != self.rate:
+                            print(f"  📊 Client reports {new_rate} Hz — adjusting playback")
+                            self.stream.close()
+                            self.rate = new_rate
+                            self.open_stream()
+                    except json.JSONDecodeError:
+                        pass
+                    metadata_received = True
+                    continue
+
+                # Binary message: PCM16 audio data
                 if isinstance(message, bytes):
                     self.stream.write(message)
         except websockets.exceptions.ConnectionClosed:

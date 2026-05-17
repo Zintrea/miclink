@@ -114,10 +114,10 @@ class AudioServer:
         stop = asyncio.Future()
 
         async def server():
-            kwargs = dict(ws_handler=self.handle_client, host=self.host, port=self.port)
+            kwargs = {}
             if self.ssl_context:
                 kwargs["ssl"] = self.ssl_context
-            async with websockets.serve(**kwargs):
+            async with websockets.serve(self.handle_client, self.host, self.port, **kwargs):
                 print(f"\n  🌐 WebSocket: {proto}://{self.host}:{self.port}")
                 if self.ssl_context:
                     print("  🔒 Secure mode — iPad needs to accept self-signed cert")

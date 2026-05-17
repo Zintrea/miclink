@@ -223,122 +223,127 @@
                 // Save for next time
                 localStorage.setItem('miclink-server-ip', raw);
 
-                setStatus('Connecting...');
+                setStatus('Requesting microphone...');
                 btn.disabled = true;
-                btn.textContent = 'Connecting...';
+                btn.textContent = 'Requesting Mic...';
 
-                const wsUrl = `ws://${addr.ip}:${addr.port}`;
-                socket = new WebSocket(wsUrl);
+                // Step 1: Request mic FIRST (in user gesture context for iOS!)
+                const constraints = {
+                    audio: {
+                        sampleRate: 48000,
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false,
+                    }
+                };
 
-                socket.onopen = async () => {
-                    setStatus('Connected — requesting microphone...', 'connected');
+                navigator.mediaDevices.getUserMedia(constraints)
+                    .then((mediaStream) => {
+                        stream = mediaStream;
 
-                    try {
-                        // KEY: Request raw audio, no browser processing
-                        const constraints = {
-                            audio: {
-                                sampleRate: 48000,
-                                echoCancellation: false,
-                                noiseSuppression: false,
-                                autoGainControl: false,
-                            }
-                        };
-
-                        stream = await navigator.mediaDevices.getUserMedia(constraints);
-
-                        // Determine actual sample rate from the device
+                        // Get actual sample rate from the device
                         const track = stream.getAudioTracks()[0];
                         const settings = track.getSettings();
                         const actualRate = settings.sampleRate || 48000;
                         console.log(`Mic: ${track.label} @ ${actualRate}Hz`);
 
+                        // Step 2: Set up audio pipeline (still in user gesture chain)
                         audioContext = new (window.AudioContext || window.webkitAudioContext)({
                             sampleRate: actualRate,
                         });
 
                         const source = audioContext.createMediaStreamSource(stream);
-
-                        // Use ScriptProcessor for real-time WebSocket streaming
-                        // (AudioWorklet is more modern, but ScriptProcessor is more compatible)
                         const bufferSize = 2048;
                         processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
-
                         source.connect(processor);
                         // NOTE: Do NOT connect processor to destination — no local playback!
+
+                        // Step 3: Now connect WebSocket
+                        setStatus('Connecting...');
+                        btn.textContent = 'Connecting...';
+
+                        const wsUrl = `ws://${addr.ip}:${addr.port}`;
+                        socket = new WebSocket(wsUrl);
 
                         let totalBytes = 0;
                         const startTime = Date.now();
 
-                        processor.onaudioprocess = (e) => {
-                            const input = e.inputBuffer.getChannelData(0);
-                            const pcm16 = new Int16Array(input.length);
+                        socket.onopen = () => {
+                            setStatus('Connected — streaming...', 'connected');
+                            isStreaming = true;
+                            btn.textContent = 'Stop Streaming';
+                            btn.className = 'btn btn-stop';
+                            btn.disabled = false;
 
-                            for (let i = 0; i < input.length; i++) {
-                                // Clamp float32 [-1, 1] → int16 [-32768, 32767]
-                                const sample = Math.max(-1, Math.min(1, input[i]));
-                                pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-                            }
+                            // Step 4: Start sending audio
+                            processor.onaudioprocess = (e) => {
+                                const input = e.inputBuffer.getChannelData(0);
+                                const pcm16 = new Int16Array(input.length);
 
-                            if (socket && socket.readyState === WebSocket.OPEN) {
-                                socket.send(pcm16.buffer);
-                                totalBytes += pcm16.byteLength;
-                            }
+                                for (let i = 0; i < input.length; i++) {
+                                    // Clamp float32 [-1, 1] → int16 [-32768, 32767]
+                                    const sample = Math.max(-1, Math.min(1, input[i]));
+                                    pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                                }
+
+                                if (socket && socket.readyState === WebSocket.OPEN) {
+                                    socket.send(pcm16.buffer);
+                                    totalBytes += pcm16.byteLength;
+                                }
+                            };
+
+                            // Update status periodically with bitrate info
+                            const bitrateInterval = setInterval(() => {
+                                if (!isStreaming) {
+                                    clearInterval(bitrateInterval);
+                                    return;
+                                }
+                                const elapsed = (Date.now() - startTime) / 1000;
+                                if (elapsed > 0) {
+                                    const kbps = (totalBytes * 8 / 1000 / elapsed).toFixed(1);
+                                    setStatus(`Streaming @ ${kbps} kbps (${actualRate} Hz)`, 'streaming');
+                                }
+                            }, 2000);
                         };
 
-                        isStreaming = true;
-                        btn.textContent = 'Stop Streaming';
-                        btn.className = 'btn btn-stop';
-                        btn.disabled = false;
+                        socket.onerror = () => {
+                            showError('Connection failed — check IP and server (' + addr.ip + ':' + addr.port + ')');
+                            resetButton();
+                            cleanup();
+                        };
 
-                        // Update status periodically with bitrate info
-                        const bitrateInterval = setInterval(() => {
-                            if (!isStreaming) {
-                                clearInterval(bitrateInterval);
-                                return;
+                        socket.onclose = (event) => {
+                            if (isStreaming) {
+                                showError('Connection lost');
+                            } else {
+                                setStatus('Disconnected');
                             }
-                            const elapsed = (Date.now() - startTime) / 1000;
-                            if (elapsed > 0) {
-                                const kbps = (totalBytes * 8 / 1000 / elapsed).toFixed(1);
-                                setStatus(`Streaming @ ${kbps} kbps (${actualRate} Hz)`, 'streaming');
-                            }
-                        }, 2000);
-
-                        setStatus(`Streaming @ ${actualRate} Hz`, 'streaming');
-
-                    } catch (err) {
+                            cleanup();
+                        };
+                    })
+                    .catch((err) => {
                         console.error('getUserMedia error:', err);
                         let msg = 'Microphone access denied';
                         let detail = err.message;
                         if (err.name === 'NotAllowedError') {
-                            msg = 'Please allow microphone access in Safari settings';
-                            detail = 'Go to Settings > Safari > Camera & Microphone Access';
+                            msg = 'Please allow microphone access in Safari';
+                            detail = 'Go to Settings > Safari > Camera & Microphone Access, or use HTTPS';
                         } else if (err.name === 'NotFoundError') {
                             msg = 'No microphone found on this device';
                         }
                         showError(msg, detail);
+                        resetButton();
                         cleanup();
-                    }
-                };
-
-                socket.onerror = (err) => {
-                    console.error('WebSocket error:', err);
-                    showError('Connection failed — check IP and server');
-                    cleanup();
-                };
-
-                socket.onclose = (event) => {
-                    if (isStreaming) {
-                        showError('Connection lost');
-                    } else {
-                        setStatus('Disconnected');
-                    }
-                    cleanup();
-                };
+                    });
             }
 
             function stopStreaming() {
                 cleanup();
                 setStatus('Stopped');
+                resetButton();
+            }
+
+            function resetButton() {
                 btn.textContent = 'Start Microphone';
                 btn.className = 'btn btn-start';
                 btn.disabled = false;

@@ -1,10 +1,10 @@
 # 🎙️ miclink — คู่มือการใช้งาน (ฉบับละเอียด)
 
-**เวอร์ชัน:** 1.1.0  
+**เวอร์ชัน:** 2.0.0  
 **อัปเดตล่าสุด:** 18 พฤษภาคม 2569  
 **ผู้จัดทำ:** Iris for Bai
 
-> 📝 **อัปเดต 1.1.0:** อธิบายการเลือก device จากตัวอย่างจริง + แผนภาพ VB-Cable สองทิศทาง + Verification flow + Troubleshooting เพิ่มเติม
+> 📝 **อัปเดต 2.0.0:** --secure mode ใช้ single port (8443), mono→stereo conversion, --gain boost, websockets v16, test scripts, troubleshooting เพิ่มเติม
 
 ---
 
@@ -374,17 +374,36 @@ python audio-server.py --secure --device 27
 5. กด **Start Microphone**
 6. ✅ **iOS ควรขึ้น pop-up ถาม Allow แล้ว!**
 
-> ⚠️ คำเตือน cert warning จะขึ้นแค่ครั้งแรก หลังจาก accept แล้วจะไม่ขึ้นอีก
+| ⚠️ คำเตือน cert warning จะขึ้นแค่ครั้งแรก หลังจาก accept แล้วจะไม่ขึ้นอีก
 
-### 7.4.4 พอร์ตที่ใช้
+### 7.4.4 พอร์ตที่ใช้ (เปลี่ยนเป็น single port!)
 
 | พอร์ต | โปรโตคอล | ใช้ทำอะไร |
 |-------|----------|----------|
-| 8443 | HTTPS | เปิดหน้าเว็บบน iPad |
-| 8765 | WSS | ส่งเสียงแบบเข้ารหัส |
+| **8443** | HTTPS + WSS | **ทุกอย่างในพอร์ตเดียว** — เปิดหน้าเว็บ + ส่งเสียง |
+
+> **สำคัญ:** ปัจจุบัน HTTPS (web-client.html) และ WSS (audio streaming) **ใช้ port 8443 เดียวกัน** เพื่อแก้ปัญหา iOS Safari cert trust per-port — ถ้าแยก port กัน iOS จะไม่ trust cert ของ WSS port
 
 > 💡 ถ้าพอร์ต 8443 ชนกับโปรแกรมอื่น ก็เปลี่ยนได้:
 > `python audio-server.py --secure --https-port 9443`
+
+### 7.4.5 ปรับ Gain (เพิ่มความดัง)
+
+ถ้าเสียงจาก iPad เบาเกินไป ให้เพิ่ม gain:
+
+```cmd
+python audio-server.py --secure --device 27 --gain 3.0
+```
+
+| --gain | เหมาะกับ |
+|--------|---------|
+| 1.0 | เสียงปกติ ไม่ต้องเพิ่ม |
+| 2.0 | เสียงเบานิดหน่อย |
+| **3.0** | **default — iPad mic เงียบ** |
+| 4.0 | เสียงเบามาก |
+| 5.0 | เสียงเบาสุด (เสี่ยง clipping) |
+
+> ระวัง — gain สูงเกินไป + input ดัง = clipping (เสียงแตก)
 
 ---
 
@@ -521,8 +540,13 @@ python audio-server.py --find-device "Speakers"
 | ❌ `Safari: "Cannot Verify Identity"` | Self-signed cert ปกติที่ต้อง accept | กด Show Details → Visit This Website |
 | ❌ `Server ปิดไม่ลง` | Windows ตีความ Ctrl+C ไม่ปกติ | กด Ctrl+C ซ้ำ หรือปิดหน้าต่าง Command Prompt |
 | ❌ `--list-devices ไม่เจอ CABLE` | ยังไม่ได้ Restart หลังติดตั้ง VB-Cable | Restart คอม แล้วลองใหม่ |
-| ❌ `WebSocket Connection Failed` | ใส่ IP หรือ Port ผิด | เช็ค IP คอม (ใช้ `ipconfig`) และ Port (ใน `.env` หรือ `--port`) |
+| ❌ `WebSocket Connection Failed` | ใส่ IP หรือ Port ผิด | เช็ค IP คอม (ใช้ `ipconfig`) และ Port (ปัจจุบันใช้ 8443 ใน --secure mode) |
 | ❌ **"CABLE Output" ไม่มีใน list** | ปกติ! ของ Bai จะขึ้นเป็น **"CABLE Input"** แทน | ใช้ `DEVICE_INDEX=27` หรือ `DEVICE_NAME=CABLE Input`
+| ❌ **เสียงแตก/ยับ (ผ่าน VB-Cable)** | ส่ง mono ไปยัง VB-Cable ที่ 48000 Hz → WASAPI mono→stereo แปลงห่วย | Server แก้ให้แล้ว — mono→stereo convert อัตโนมัติ |
+| ❌ **เสียงเบามากแม้เปิด autoGainControl** | iPad mic raw level ต่ำมาก | เพิ่ม `--gain 3.0` หรือมากกว่า |
+| ❌ **iOS เชื่อมต่อแล้ว แต่ streaming @ 0.0 kbps** | ScriptProcessorNode ไม่ยิง onaudioprocess (iOS bug) | Server แก้ให้แล้ว (GainNode + callback timing)
+| ❌ **เสียงเพี้ยน/ฟังไม่รู้เรื่อง (iOS)** | onaudioprocess callback ตั้งช้า → iOS accumulate buffer | Server แก้ให้แล้ว (callback ตั้งก่อน connect audio graph)
+| ❌ **เปิดหน้าเว็บได้ แต่ WSS connection fail** | iOS cert trust per-port (cert ยอมรับแค่ port 8443) | Server แก้ให้แล้ว — HTTP+WSS ใช้ port 8443 เดียวกัน
 
 ---
 

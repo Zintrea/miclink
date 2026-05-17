@@ -1,9 +1,11 @@
 # 🎙️ miclink — ไมค์มือถือ ใช้บน PC แบบไร้สาย
 
 > เปลี่ยน iPad / iPhone / Android ให้เป็นไมโครโฟนคุณภาพสูงสำหรับ Discord, OBS, Zoom โดยไม่ต้องซื้ออุปกรณ์เพิ่มเลยสักบาท
+>
+> ✅ **รองรับ iOS แล้ว!** — ต้องเปิดด้วย `--secure` mode (HTTPS + WSS) เท่านั้น
 
 ```
-ไมค์ iPad → Browser → WebSocket → Python Server → VB-Cable → Discord/OBS/Zoom
+ไมค์ iPad → Safari → WebSocket (WSS) → Python Server → VB-Cable → Discord/OBS/Zoom
 ```
 
 ---
@@ -23,136 +25,96 @@
 
 ## Tech Stack — ใช้ตัวไหนทำอะไร
 
-### ภาพรวม Architecture
+### ภาพรวม Architecture (ปัจจุบัน)
 
 ```
-┌──────────────────────┐         WebSocket          ┌──────────────────────┐
-│  iPad / มือถือ        │  ◄────────────────────►   │  Windows PC          │
-│                      │     ws://192.168.x.x:8765  │                      │
-│  Safari/Chrome       │          เสียง PCM16        │  Python Server       │
-│  (getUserMedia API)  │                             │  (audio-server.py)   │
-│                      │                             │         ↓            │
-│  จับเสียงจากไมค์       │                             │  PyAudio → VB-Cable  │
-│  → ส่ง raw audio      │                             │         ↓            │
-│  → แบบ real-time      │                             │  Discord / OBS / Zoom│
-└──────────────────────┘                             └──────────────────────┘
+┌──────────────────────┐       WebSocket (WSS)        ┌──────────────────────────────┐
+│  iPad / มือถือ        │  ◄────────────────────►     │  Windows PC                  │
+│                      │     wss://IP:8443             │                              │
+│  Safari/Chrome       │          เสียง PCM16 mono     │  Python Server (audio-server)│
+│  (getUserMedia API)  │                               │  (port 8443 — all-in-one)    │
+│                      │                               │                              │
+│  จับเสียงจากไมค์       │                               │  mono → stereo convert      │
+│  → ScriptProcessor    │                               │  + gain boost               │
+│  → ส่ง raw PCM16      │                               │  → PyAudio → VB-Cable       │
+│  → real-time          │                               │       → Discord / OBS / Zoom│
+└──────────────────────┘                               └──────────────────────────────┘
 ```
 
 ### 1. 🧩 ฝั่ง Client — Browser (iPad / มือถือ)
 
-**เทคโนโลยี:** `getUserMedia` API + JavaScript WebSocket
+**เทคโนโลยี:** `getUserMedia` + ScriptProcessorNode + WebSocket
 
-เป็น API ที่ Browser มีอยู่แล้วในตัว — **ไม่ต้องติดตั้งแอปเพิ่ม!**
-
-- เปิด Safari/Chrome → เข้า URL `http://<IP>:8000/web-client.html`
+- เปิด Safari → เข้า URL `https://<IP>:8443/web-client.html`
 - Browser ถามขอใช้ไมค์ → กด Allow
-- JavaScript ใช้ `navigator.mediaDevices.getUserMedia()` เพื่อดึงเสียงสดจากไมค์
-- แปลงเสียงเป็น Raw PCM16 (เสียงที่ไม่บีบอัด) → ส่งผ่าน WebSocket ไปหา Server
+- แปลง Float32 เป็น Int16 → ส่งผ่าน WebSocket
 
-> **ทำไมไม่บีบอัด?** เพราะเราอยากให้ **หน่วงน้อยที่สุด** — ถ้าบีบอัด (mp3/opus) จะช้าลงเพราะต้องรอ encode/decode
+> **ทำไมไม่บีบอัด?** เพราะอยากให้ **หน่วงน้อยที่สุด + คุณภาพ lossless** — miclink ใช้ raw PCM16 ที่ 768 kbps
 
-### 2. 🌐 ช่องทางส่งข้อมูล — WebSocket
+### 2. 🌐 ช่องทางส่งข้อมูล — WebSocket (WSS)
 
-**เทคโนโลยี:** `websockets` (Python library)
+**เทคโนโลยี:** `websockets` v16 (Python library)
 
-WebSocket เหมือน **ท่อส่งข้อมูลที่เปิดตลอดเวลา** — ไม่ต้องโทรหากันใหม่ทุกครั้ง เหมาะกับเสียงแบบ real-time มากกว่า HTTP ทั่วไป
-
-- เปิด connection ครั้งเดียว
-- ข้อมูลไหลตลอดจนกว่าจะปิด
-- หน่วงต่ำมาก (real-time)
+- ปัจจุบัน HTTP + WSS **ใช้ port 8443 เดียวกัน** (iOS cert trust ไม่แยก per-port)
+- ใน --secure mode ทุกอย่าง run on same port
 
 ### 3. 🐍 ฝั่ง Server — Python
 
-**เทคโนโลยี:** Python 3.10+ + `PyAudio` + `python-dotenv`
+**เทคโนโลยี:** Python 3.10+ + PyAudio + websockets + python-dotenv
 
-Server เป็นตัวกลางรับเสียงจากมือถือ แล้วส่งเข้าคอม:
-
-1. `python-dotenv` — อ่านค่า config จาก `.env` (Port, Device ฯลฯ)
-2. `websockets.serve()` — สร้าง WebSocket server รอรับ connection
-3. พอมือถือต่อมา → server รับ raw audio bytes
-4. ส่งต่อไปยัง `PyAudio` stream → เล่นเสียงออก VB-Cable
-
-**ทำไมถึงใช้ Python?**
-- เขียนง่าย อ่านเข้าใจได้
-- PyAudio = ตัวต่อเสียงมาตรฐานของ Python
-- ใช้ Library น้อยมาก แค่ 3 ตัว — ไม่มี external dependencies เยอะ
-- Debug ง่าย (แก้ไข code แล้วรันใหม่ได้ทันที ไม่ต้อง compile)
+Server ทำหน้าที่:
+1. รับ audio จาก WebSocket (PCM16 mono)
+2. **Mono → Stereo** (VB-Cable ต้อง stereo ถึงจะชัด)
+3. **Gain boost** (default 3.0x — แก้ปัญหา iPad mic quiet)
+4. ส่งไปยัง PyAudio stream → VB-Cable
 
 ### 4. 🔌 ตัวเชื่อมต่อ — VB-Cable
 
-**เทคโนโลยี:** [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (ฟรี)
+[VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (ฟรี)
 
-VB-Cable เป็นโปรแกรมที่ **จำลองการ์ดเสียงเสมือน** — ทำให้ Windows คิดว่ามีไมโครโฟนตัวใหม่เสียบอยู่
-
-- ติดตั้งครั้งเดียว
-- Restart คอมครั้งเดียว
-- หลัง Restart → ใน Discord/OBS/Zoom จะเห็น **"CABLE Input"** เป็นตัวเลือกไมค์
-- Server ส่งเสียงไปที่ "CABLE Output" → ข้อมูลวิ่งผ่านสายเสมือน → ออกที่ "CABLE Input" → App เห็นเป็นไมค์
+> **Device Index:** `27` — CABLE Input (VB-Audio Virtual Cable) @ 48000Hz
 
 ---
 
-## ไฟล์ในโปรเจกต์ — เอาไว้ทำอะไร
+## ไฟล์ในโปรเจกต์
 
-| ไฟล์ | ภาษาที่ใช้ | เอาไว้ทำอะไร |
-|------|-----------|-------------|
-| `audio-server.py` | 🐍 Python (163 บรรทัด) | ตัว server หลัก — รับ WebSocket → ส่งเสียงเข้า VB-Cable |
-| `web-client.html` | 🌐 HTML + JS (1 ไฟล์) | หน้าเว็บสำหรับเปิดบนมือถือ — จับไมค์ → ส่ง WebSocket |
-| `requirements.txt` | 📦 pip list | รายการ library ที่ต้องลง (websockets, pyaudio, python-dotenv) |
-| `.env` | 🔧 Config | ตั้งค่าต่าง ๆ — port, device, sample rate |
-| `GUIDE.md` | 📘 คู่มือ | คู่มือภาษาไทยฉบับละเอียด (คนไม่เขียนโปรแกรมก็อ่านได้) |
-
----
-
-## การพัฒนาที่ผ่านมา (Development Journey)
-
-```
-Phase 1 — Scaffold (commit 1)
-├── ✅ audio-server.py + web-client.html พร้อมใช้งาน
-├── ✅ โครงสร้างพื้นฐาน: WebSocket → PyAudio → VB-Cable
-└── ✅ README.md ภาษาอังกฤษ
-
-Phase 2 — Production Hardening (commit 2-3)
-├── ✅ .env config — ไม่ต้องแก้ code เวลาเปลี่ยน port/device
-├── ✅ python-dotenv — โหลดค่าจาก .env อัตโนมัติ
-├── ✅ Auto-detect VB-Cable — ใส่ชื่อ device ใน .env ก็หาให้
-├── ✅ --host / --port / --device CLI ยัง override .env ได้
-├── ✅ Fix: Windows signal handler bug (add_signal_handler ไม่ support บน Windows)
-├── ✅ .env → .gitignore (ป้องกัน secret รั่วไหล)
-├── ✅ GUIDE.md — คู่มือภาษาไทย 12 หมวด
-└── ✅ README.md ภาษาไทย — อันนี้แหละ!
-```
+| ไฟล์ | คำอธิบาย |
+|------|---------|
+| `audio-server.py` | Server หลัก — WebSocket + PyAudio + HTTPS/WSS on single port |
+| `web-client.html` | หน้าเว็บสำหรับเปิดบนมือถือ |
+| `test-pyaudio.py` | Test PyAudio playback (sine wave / WAV file) |
+| `diagnostic.html` | Diagnostic tool สำหรับ ScriptProcessorNode |
+| `certs/gen-cert.py` | สร้าง self-signed cert สำหรับ secure mode |
+| `GUIDE.md` | คู่มือภาษาไทยฉบับละเอียด |
+| `requirements.txt` | websockets, pyaudio, python-dotenv |
 
 ---
 
-## วิธีรัน (ฉบับย่อ)
+## วิธีรัน (iOS / Secure Mode)
 
 ### 1. ติดตั้ง VB-Cable
-- ดาวน์โหลดฟรี → https://vb-audio.com/Cable/
-- **ต้อง Restart คอมหลังติดตั้ง!**
+- https://vb-audio.com/Cable/ → **ต้อง Restart คอมหลังติดตั้ง!**
 
 ### 2. ลง Python dependencies
 ```cmd
 pip install -r requirements.txt
 ```
 
-### 3. ตั้งค่า .env (ใช้ Notepad ก็ได้)
-เปิด `.env` → เช็คว่า `DEVICE_NAME=CABLE Output`
+### 3. สร้าง Certificate (ครั้งแรกครั้งเดียว)
+```cmd
+python certs/gen-cert.py
+```
 
 ### 4. รัน Server
 ```cmd
-python audio-server.py
+python audio-server.py --secure --device 27 --gain 3.0
 ```
 
-### 5. เปิดหน้าเว็บบนมือถือ
-```cmd
-python -m http.server 8000
-```
-แล้วเปิด Safari ที่ iPad → `http://<IP>:8000/web-client.html`
+### 5. เปิดบน iPad
+`https://172.20.10.2:8443/web-client.html` → ใส่ IP → Start
 
 ### 6. ใช้ใน Discord
-- Settings → Voice & Video → Input Device → **CABLE Input**
-
-> **คู่มือละเอียดมากอยู่ที่ `GUIDE.md` น้าา — มี troubleshooting ครบ!**
+Settings → Voice & Video → Input Device → **CABLE Input (VB-Audio Virtual Cable)**
 
 ---
 
@@ -160,10 +122,28 @@ python -m http.server 8000
 
 | คำสั่ง | ทำอะไร |
 |-------|--------|
-| `python audio-server.py` | รัน server (ใช้ค่าใน .env) |
-| `python audio-server.py --port 9000` | รันด้วย port อื่น |
-| `python audio-server.py --list-devices` | ดูรายการอุปกรณ์เสียงที่มี |
-| `python audio-server.py --find-device "CABLE"` | หา CABLE device index |
+| `python audio-server.py --secure --device 27` | รัน secure mode (iOS) |
+| `python audio-server.py --secure --device 27 --gain 4.0` | เพิ่ม gain ถ้าเสียงเบา |
+| `python audio-server.py --secure --device 27 --record diag.wav` | บันทึกเสียงลง WAV |
+| `python audio-server.py --list-devices` | ดูอุปกรณ์เสียงทั้งหมด |
+| `python test-pyaudio.py` | ทดสอบ PyAudio กับ default output |
+| `python test-pyaudio.py --device 27` | ทดสอบกับ VB-Cable |
+| `python test-pyaudio.py --play diag.wav` | เล่นไฟล์ WAV ที่บันทึกไว้ |
+
+---
+
+## ปัญหาที่เจอและแก้แล้ว
+
+| ปัญหา | อาการ | วิธีแก้ |
+|-------|-------|--------|
+| iOS mic pop-up ไม่ขึ้น | HTTP → getUserMedia ไม่ได้ | ใช้ `--secure` (HTTPS) |
+| cert trust per-port | หน้าเว็บ open แต่ WebSocket fail | รวม HTTP+WSS port 8443 เดียว |
+| streaming @ 0.0 kbps | iPad connect แต่ไม่มี data | เพิ่ม GainNode(0) ใน audio graph |
+| Audio garbled | iOS ScriptProcessor data เสีย | Set onaudioprocess ก่อน connect graph |
+| VB-Cable mono = แตก | ส่ง mono แล้วเสียงแตก | ส่ง stereo (L/R duplicate) |
+| เสียงเบามาก | iPad mic raw level ต่ำ | `autoGainControl: true` + `--gain 3.0` |
+
+> **รายละเอียดทั้งหมด + Technical Notes อยู่ใน** `knowledge/miclink/01-debugging-journey.md` (Obsidian vault)
 
 ---
 

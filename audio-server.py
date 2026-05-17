@@ -48,19 +48,38 @@ def find_device_by_name(p, name_substring):
     return None
 
 
-def mono_to_stereo(mono_bytes):
-    """Convert mono PCM16 bytes to interleaved stereo PCM16.
+def mono_to_stereo(mono_bytes, gain=3.0):
+    """Convert mono PCM16 bytes to interleaved stereo PCM16 with gain boost.
     
     VB-Cable (device 27) produces garbled audio with mono output
     at 48000 Hz. Sending native stereo (L/R duplicate) fixes it.
+    
+    gain: volume multiplier (2.0-4.0). Clamps to prevent clipping.
     """
     result = bytearray(len(mono_bytes) * 2)
     for i in range(0, len(mono_bytes), 2):
-        # Duplicate each 16-bit sample to L and R channels
-        result[i * 2] = mono_bytes[i]       # L low byte
-        result[i * 2 + 1] = mono_bytes[i + 1]  # L high byte
-        result[i * 2 + 2] = mono_bytes[i]      # R low byte
-        result[i * 2 + 3] = mono_bytes[i + 1]  # R high byte
+        # Read 16-bit signed little-endian sample
+        sample = mono_bytes[i] | (mono_bytes[i + 1] << 8)
+        # Convert from unsigned to signed (Python treats bytes as 0-255)
+        if sample >= 32768:
+            sample -= 65536
+        
+        # Apply gain boost
+        sample = int(sample * gain)
+        if sample > 32767:
+            sample = 32767
+        elif sample < -32768:
+            sample = -32768
+        
+        # Convert back to unsigned for byte packing
+        if sample < 0:
+            sample += 65536
+        
+        # Duplicate to L and R
+        result[i * 2] = sample & 0xFF
+        result[i * 2 + 1] = (sample >> 8) & 0xFF
+        result[i * 2 + 2] = sample & 0xFF
+        result[i * 2 + 3] = (sample >> 8) & 0xFF
     return bytes(result)
 
 
@@ -83,6 +102,7 @@ class AudioServer:
         self.p = pyaudio.PyAudio()
         self.stream = None
         self.rate = RATE
+        self.gain = 3.0  # default volume boost; overridden by --gain
         self.record_path = None
         self.record_wav = None  # WAV file for --record diagnostics
         self.clients = set()
@@ -148,7 +168,7 @@ class AudioServer:
                 # Binary message: PCM16 audio data
                 if isinstance(message, bytes):
                     # Convert mono → stereo (VB-Cable needs native stereo)
-                    stereo_data = mono_to_stereo(message)
+                    stereo_data = mono_to_stereo(message, gain=self.gain)
                     self.stream.write(stereo_data)
                     if self.record_wav is not None:
                         self.record_wav.writeframes(message)  # save original mono
@@ -206,6 +226,7 @@ class AudioServer:
         print(f"  Host: {self.host}")
         print(f"  Port: {self.port} ({proto})")
         print(f"  Audio: {RATE} Hz, {OUTPUT_CHANNELS} ch (stereo), PCM16")
+        print(f"  Gain: {self.gain}x")
         self.open_stream()
 
         stop = asyncio.Future()
@@ -273,6 +294,8 @@ def main():
                         help="Port for HTTPS/WSS in --secure mode (default: 8443)")
     parser.add_argument("--record", type=str, default=None,
                         help="Save incoming audio to WAV file for diagnostics (e.g. diag.wav)")
+    parser.add_argument("--gain", type=float, default=3.0,
+                        help="Volume boost for quiet mics (default: 3.0, range 1.0-5.0)")
     args = parser.parse_args()
 
     if args.list_devices:
@@ -336,6 +359,7 @@ def main():
         web_dir=web_dir,
     )
     server.record_path = args.record
+    server.gain = args.gain
     try:
         asyncio.run(server.start())
     except KeyboardInterrupt:

@@ -238,7 +238,7 @@
                 };
 
                 navigator.mediaDevices.getUserMedia(constraints)
-                    .then((mediaStream) => {
+                    .then(async (mediaStream) => {
                         stream = mediaStream;
 
                         // Get actual sample rate from the device
@@ -248,15 +248,26 @@
                         console.log(`Mic: ${track.label} @ ${actualRate}Hz`);
 
                         // Step 2: Set up audio pipeline (still in user gesture chain)
-                        audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                            sampleRate: actualRate,
-                        });
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+                        // iOS Safari starts AudioContext in 'suspended' state
+                        if (audioContext.state === 'suspended') {
+                            await audioContext.resume();
+                        }
+                        console.log('AudioContext state:', audioContext.state, '@', actualRate, 'Hz');
 
                         const source = audioContext.createMediaStreamSource(stream);
                         const bufferSize = 2048;
                         processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
                         source.connect(processor);
-                        // NOTE: Do NOT connect processor to destination — no local playback!
+
+                        // CRITICAL for iOS Safari: ScriptProcessorNode's onaudioprocess
+                        // only fires when the output is connected to destination.
+                        // Use GainNode(0) to complete the audio graph without local playback.
+                        const silentGain = audioContext.createGain();
+                        silentGain.gain.value = 0;
+                        processor.connect(silentGain);
+                        silentGain.connect(audioContext.destination);
 
                         // Step 3: Now connect WebSocket
                         setStatus('Connecting...');

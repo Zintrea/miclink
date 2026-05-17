@@ -285,7 +285,8 @@
 
                         socket.onopen = () => {
                             // Send sample rate to server first (critical for sync!)
-                            socket.send(JSON.stringify({ sample_rate: actualRate }));
+                            // Use audioContext.sampleRate, NOT mic hardware rate!
+                            socket.send(JSON.stringify({ sample_rate: audioContext.sampleRate }));
 
                             setStatus('Connected — streaming...', 'connected');
                             isStreaming = true;
@@ -319,7 +320,7 @@
                                 const elapsed = (Date.now() - startTime) / 1000;
                                 if (elapsed > 0) {
                                     const kbps = (totalBytes * 8 / 1000 / elapsed).toFixed(1);
-                                    setStatus(`Streaming @ ${kbps} kbps (${actualRate} Hz)`, 'streaming');
+                                    setStatus(`Streaming @ ${kbps} kbps (${audioContext.sampleRate} Hz)`, 'streaming');
                                 }
                             }, 2000);
                         };

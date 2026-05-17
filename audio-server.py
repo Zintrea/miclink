@@ -4,6 +4,7 @@ Receives PCM16 audio via WebSocket and outputs to Virtual Audio Cable
 
 Usage:
     python audio-server.py [--device DEVICE_INDEX] [--port PORT]
+    python audio-server.py --secure [--device DEVICE_INDEX]
 
 Run with --list-devices to see available audio output devices.
 """
@@ -14,8 +15,6 @@ import os
 import sys
 import signal
 import ssl
-import http.server
-import threading
 import mimetypes
 from pathlib import Path
 
@@ -54,11 +53,13 @@ RATE = 48000        # Studio quality sample rate
 
 
 class AudioServer:
-    def __init__(self, host="0.0.0.0", port=8765, device_index=None, ssl_context=None):
+    def __init__(self, host="0.0.0.0", port=8765, device_index=None,
+                 ssl_context=None, web_dir=None):
         self.host = host
         self.port = port
         self.device_index = device_index
         self.ssl_context = ssl_context
+        self.web_dir = Path(web_dir) if web_dir else Path.cwd()
         self.p = pyaudio.PyAudio()
         self.stream = None
         self.clients = set()
@@ -100,8 +101,37 @@ class AudioServer:
         finally:
             self.clients.discard(websocket)
 
+    async def handle_http_request(self, path, request_headers):
+        """Serve static files for non-WebSocket requests (e.g. web-client.html)."""
+        # Normalize path — serve index at / or /web-client.html
+        path = path.lstrip("/")
+        if path == "" or path == "/":
+            path = "web-client.html"
+
+        # Security: resolve and verify path is within web_dir
+        full_path = (self.web_dir / path).resolve()
+        try:
+            full_path.relative_to(self.web_dir.resolve())
+        except ValueError:
+            return (403, [], b"Forbidden")
+
+        if not full_path.exists() or not full_path.is_file():
+            return (404, [], b"Not found")
+
+        body = full_path.read_bytes()
+        mime_type, _ = mimetypes.guess_type(str(full_path))
+        if mime_type is None:
+            mime_type = "application/octet-stream"
+
+        headers = [
+            ("Content-Type", mime_type),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", "no-cache"),
+        ]
+        return (200, headers, body)
+
     async def start(self):
-        """Start the WebSocket server."""
+        """Start the server — serves both HTTP (static files) and WebSocket on the same port."""
         proto = "wss" if self.ssl_context else "ws"
         print("\n" + "=" * 50)
         print("  🎙️  miclink — High-Quality Audio Server")
@@ -117,11 +147,13 @@ class AudioServer:
             kwargs = {}
             if self.ssl_context:
                 kwargs["ssl"] = self.ssl_context
+                kwargs["process_request"] = self.handle_http_request
             async with websockets.serve(self.handle_client, self.host, self.port, **kwargs):
-                print(f"\n  🌐 WebSocket: {proto}://{self.host}:{self.port}")
+                web_url = f"https://{self.host}:{self.port}/web-client.html"
+                print(f"\n  🌍 All-in-one: {web_url}")
                 if self.ssl_context:
-                    print("  🔒 Secure mode — iPad needs to accept self-signed cert")
-                print("  💡 Open web-client.html on your iPad/phone and connect!\n")
+                    print("  🔒 Secure mode — everything on one port (cert trust stays consistent)")
+                print("  💡 Open the URL above on your iPad/phone and connect!\n")
                 await stop  # run forever
 
         # Handle Ctrl+C gracefully
@@ -157,7 +189,7 @@ def main():
     parser.add_argument("--host", type=str, default=host_default,
                         help=f"Host interface (default: {host_default})")
     parser.add_argument("--port", type=int, default=port_default,
-                        help=f"WebSocket port (default: {port_default})")
+                        help=f"Port for WebSocket (non-secure) or all-in-one (secure) (default: {port_default})")
     parser.add_argument("--device", type=int, default=device_index_default,
                         help="Output device index")
     parser.add_argument("--list-devices", action="store_true",
@@ -171,7 +203,7 @@ def main():
     parser.add_argument("--key", type=str, default=None,
                         help="Path to SSL key file (default: certs/server.key)")
     parser.add_argument("--https-port", type=int, default=8443,
-                        help="HTTPS port for web-client (default: 8443)")
+                        help="Port for HTTPS/WSS in --secure mode (default: 8443)")
     args = parser.parse_args()
 
     if args.list_devices:
@@ -189,9 +221,11 @@ def main():
         p.terminate()
         return
 
-    # If --device not given but DEVICE_NAME is set in .env, auto-detect
     # Setup SSL if --secure is used
     ssl_context = None
+    final_port = args.port          # non-secure: use --port (default 8765)
+    web_dir = None
+
     if args.secure:
         script_dir = Path(__file__).parent
         cert_path = Path(args.cert) if args.cert else script_dir / "certs" / "server.pem"
@@ -206,32 +240,12 @@ def main():
         ssl_context.load_cert_chain(str(cert_path), str(key_path))
         print(f"  🔒 SSL: {cert_path}")
 
-        # Start HTTPS server for web-client.html in a background thread
+        # In secure mode: use --https-port as the single unified port
+        final_port = args.https_port
         web_dir = script_dir
-        https_port = args.https_port
 
-        class QuietHandler(http.server.SimpleHTTPRequestHandler):
-            def __init__(self, *a, **kw):
-                super().__init__(*a, directory=str(web_dir), **kw)
-
-            def log_message(self, format, *args):
-                pass  # Suppress HTTP log noise
-
-        https_server = http.server.HTTPServer((args.host, https_port), QuietHandler)
-        https_server.socket = ssl_context.wrap_socket(
-            https_server.socket, server_side=True
-        )
-
-        def run_https():
-            try:
-                https_server.serve_forever()
-            except OSError:
-                pass  # Port already in use — ignore
-
-        t = threading.Thread(target=run_https, daemon=True)
-        t.start()
-        print(f"  🌍 HTTPS: https://{args.host}:{https_port}/web-client.html")
-        print(f"  📱 iPad: https://172.20.10.2:8443/web-client.html")
+        print(f"  🌍 Unified server: https://{args.host}:{final_port}")
+        print(f"  📱 iPad: https://172.20.10.2:{final_port}/web-client.html")
         print()
 
     device_index = args.device
@@ -245,7 +259,13 @@ def main():
         else:
             print(f"  ⚠️  Device '{device_name_default}' not found — using default output")
 
-    server = AudioServer(host=args.host, port=args.port, device_index=device_index, ssl_context=ssl_context)
+    server = AudioServer(
+        host=args.host,
+        port=final_port,
+        device_index=device_index,
+        ssl_context=ssl_context,
+        web_dir=web_dir,
+    )
     try:
         asyncio.run(server.start())
     except KeyboardInterrupt:

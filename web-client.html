@@ -188,7 +188,9 @@
             function parseServerAddress(input) {
                 // Accept: "IP", "IP:PORT", "ws://IP:PORT", "ws://IP"
                 let ip = input;
-                let port = 8765;
+                // Same port as the page we're on (HTTPS + WSS on one port),
+                // fallback to 8765 for non-secure / file:// mode
+                let port = parseInt(window.location.port, 10) || 8765;
 
                 // Strip ws:// prefix
                 ip = ip.replace(/^ws:\/\//i, '');

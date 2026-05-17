@@ -102,7 +102,14 @@ class AudioServer:
             self.clients.discard(websocket)
 
     async def handle_http_request(self, path, request_headers):
-        """Serve static files for non-WebSocket requests (e.g. web-client.html)."""
+        """Serve static files for non-WebSocket requests (e.g. web-client.html).
+
+        Returns None for WebSocket upgrade requests so the library handles them.
+        """
+        # CRITICAL: let WebSocket upgrade requests pass through
+        if request_headers.get("Upgrade", "").lower() == "websocket":
+            return None
+
         # Normalize path — serve index at / or /web-client.html
         path = path.lstrip("/")
         if path == "" or path == "/":

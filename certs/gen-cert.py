@@ -1,15 +1,19 @@
 """Generate a self-signed certificate for miclink HTTPS/WSS.
 
 Usage:
-    python gen-cert.py
+    python certs/gen-cert.py [--ip 172.20.10.2]
+
+If --ip is omitted, auto-detects from ipconfig output.
 
 Output:
     certs/server.pem   — Combined cert + private key for Python ssl
     certs/server.crt   — Certificate only (for manual install on iPad)
 """
 import os
+import re
 import subprocess
 import sys
+import argparse
 
 CERT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "certs")
 CERT_PEM = os.path.join(CERT_DIR, "server.pem")
@@ -25,12 +29,54 @@ def check_openssl():
         return False
 
 
-def generate_cert():
-    """Generate a self-signed cert with SAN for IP addresses (172.x, 192.168.x, 10.x)."""
+def detect_ip():
+    """Auto-detect local IP address from ipconfig (Windows) or ip (Linux/WSL)."""
+    try:
+        # Try Windows ipconfig first
+        result = subprocess.run(["ipconfig"], capture_output=True, text=True)
+        for line in result.stdout.splitlines():
+            m = re.search(r"IPv4 Address[^:]*:\s*(\d+\.\d+\.\d+\.\d+)", line)
+            if m:
+                ip = m.group(1)
+                parts = ip.split(".")
+                if parts[0] in ("192", "10") or (parts[0] == "172" and 16 <= int(parts[1]) <= 31):
+                    return ip
+    except FileNotFoundError:
+        pass
+
+    # Fallback: try Linux/WSL ip command
+    try:
+        result = subprocess.run(["ip", "-4", "addr", "show"], capture_output=True, text=True)
+        for line in result.stdout.splitlines():
+            m = re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)", line)
+            if m:
+                ip = m.group(1)
+                if ip.startswith("127."):
+                    continue
+                parts = ip.split(".")
+                if parts[0] in ("192", "10") or (parts[0] == "172" and 16 <= int(parts[1]) <= 31):
+                    return ip
+    except FileNotFoundError:
+        pass
+
+    return None
+
+
+def generate_cert(ip_addresses):
+    """Generate a self-signed cert with SAN for the given IPs."""
     os.makedirs(CERT_DIR, exist_ok=True)
 
-    # Config for Subject Alternative Name (required for IP access on iOS)
-    config = """[req]
+    ips = list(dict.fromkeys(ip_addresses))  # deduplicate, preserve order
+
+    # Build SAN entries
+    san_lines = []
+    san_lines.append("IP.1 = 127.0.0.1")
+    san_lines.append("DNS.1 = localhost")
+    for i, ip in enumerate(ips, start=2):
+        san_lines.append(f"IP.{i} = {ip}")
+    san_str = "\n".join(san_lines)
+
+    config = f"""[req]
 default_bits = 2048
 prompt = no
 default_md = sha256
@@ -49,16 +95,14 @@ keyUsage = digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
 
 [alt_names]
-IP.1 = 0.0.0.0
-IP.2 = 127.0.0.1
-DNS.1 = localhost
+{san_str}
 """
 
     config_path = os.path.join(CERT_DIR, "san.conf")
     with open(config_path, "w") as f:
         f.write(config)
 
-    # Generate private key + self-signed cert in one command
+    # Generate private key + self-signed cert
     subprocess.run(
         ["openssl", "req", "-x509", "-nodes", "-days", "3650",
          "-newkey", "rsa:2048",
@@ -78,25 +122,39 @@ DNS.1 = localhost
     # Clean up config
     os.remove(config_path)
 
-    print(f"✅ Certificate generated!")
+    print(f"✅ Certificate regenerated! SAN IPs: {', '.join(ips)}")
     print(f"   Server PEM: {CERT_PEM}")
-    print(f"   Certificate: {CERT_CRT}")
     print(f"   Expires: 10 years")
     print()
     print("📱 On your iPad:")
-    print("   1. Open Safari and go to https://<IP>:8443/web-client.html")
-    print("   2. Tap 'Show Details' → 'Visit This Website' (accept the warning)")
-    print("   3. Done! The cert warning only shows once.")
+    print(f"   1. Open Safari → https://<IP>:8443/web-client.html")
+    print(f"   2. Tap 'Show Details' → 'Visit This Website'")
+    print(f"   3. Enter IP: {ips[0] if ips else '<YOUR_IP>'}")
+    print(f"   4. Tap Start Microphone — pop-up should appear! ✅")
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate SSL cert for miclink")
+    parser.add_argument("--ip", type=str, default=None,
+                        help="Your PC's IP address (auto-detected if omitted)")
+    args = parser.parse_args()
+
     if not check_openssl():
         print("❌ OpenSSL not found. Please install OpenSSL:")
         print("   - Windows: https://slproweb.com/products/Win32OpenSSL.html")
         print("   - Or use WSL (openssl is already installed)")
         sys.exit(1)
 
-    if os.path.exists(CERT_PEM):
-        print("📄 Certificate already exists. Delete certs/ to regenerate.")
-    else:
-        generate_cert()
+    ips = []
+    if args.ip:
+        ips.append(args.ip)
+    detected = detect_ip()
+    if detected:
+        ips.append(detected)
+
+    if not ips:
+        print("❌ Could not detect IP. Please specify manually:")
+        print("   python certs/gen-cert.py --ip 172.20.10.2")
+        sys.exit(1)
+
+    generate_cert(ips)

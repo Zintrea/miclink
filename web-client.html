@@ -309,7 +309,9 @@
                         };
 
                         socket.onerror = () => {
-                            showError('Connection failed — check IP and server (' + addr.ip + ':' + addr.port + ')');
+                            showError('Connection failed — check that you used:');
+                            errorDetail.textContent = 'Open https://172.20.10.2:8443/web-client.html on Safari, enter IP: 172.20.10.2';
+                            errorDetail.style.display = 'block';
                             resetButton();
                             cleanup();
                         };

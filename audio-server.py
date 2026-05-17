@@ -231,7 +231,7 @@ def main():
         t = threading.Thread(target=run_https, daemon=True)
         t.start()
         print(f"  🌍 HTTPS: https://{args.host}:{https_port}/web-client.html")
-        print(f"  📱 Open on iPad: https://<YOUR_IP>:{https_port}/web-client.html")
+        print(f"  📱 iPad: https://172.20.10.2:8443/web-client.html")
         print()
 
     device_index = args.device

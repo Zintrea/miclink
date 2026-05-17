@@ -101,7 +101,7 @@ class AudioServer:
         finally:
             self.clients.discard(websocket)
 
-    async def handle_http_request(self, request):
+    async def handle_http_request(self, connection, request):
         """Serve static files for non-WebSocket requests (e.g. web-client.html).
 
         Returns None for WebSocket upgrade requests so the library handles them.

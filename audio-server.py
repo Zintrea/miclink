@@ -114,8 +114,12 @@ class AudioServer:
 
         # Handle Ctrl+C gracefully
         loop = asyncio.get_running_loop()
-        loop.add_signal_handler(signal.SIGINT, lambda: stop.set_result(None))
-        loop.add_signal_handler(signal.SIGTERM, lambda: stop.set_result(None))
+        try:
+            loop.add_signal_handler(signal.SIGINT, lambda: stop.set_result(None))
+            loop.add_signal_handler(signal.SIGTERM, lambda: stop.set_result(None))
+        except NotImplementedError:
+            # Windows: fall back to KeyboardInterrupt from main()
+            pass
 
         await server()
 

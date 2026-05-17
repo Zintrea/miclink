@@ -21,6 +21,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 import websockets
+from websockets.http11 import Response, Headers
 import pyaudio
 
 
@@ -121,22 +122,21 @@ class AudioServer:
         try:
             full_path.relative_to(self.web_dir.resolve())
         except ValueError:
-            return (403, [], b"Forbidden")
+            return Response(403, "Forbidden", Headers(), b"Forbidden")
 
         if not full_path.exists() or not full_path.is_file():
-            return (404, [], b"Not found")
+            return Response(404, "Not Found", Headers(), b"Not found")
 
         body = full_path.read_bytes()
         mime_type, _ = mimetypes.guess_type(str(full_path))
         if mime_type is None:
             mime_type = "application/octet-stream"
 
-        headers = [
-            ("Content-Type", mime_type),
-            ("Content-Length", str(len(body))),
-            ("Cache-Control", "no-cache"),
-        ]
-        return (200, headers, body)
+        headers = Headers()
+        headers["Content-Type"] = mime_type
+        headers["Content-Length"] = str(len(body))
+        headers["Cache-Control"] = "no-cache"
+        return Response(200, "OK", headers, body)
 
     async def start(self):
         """Start the server — serves both HTTP (static files) and WebSocket on the same port."""

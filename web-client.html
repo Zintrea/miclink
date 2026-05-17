@@ -261,6 +261,30 @@
                         const source = audioContext.createMediaStreamSource(stream);
                         const bufferSize = 2048;
                         processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+                        // CRITICAL: Set onaudioprocess BEFORE connecting audio graph!
+                        // iOS Safari accumulates audio data internally if the callback
+                        // is not set when audio starts flowing — causes garbled output.
+                        let totalBytes = 0;
+                        const startTime = Date.now();
+
+                        processor.onaudioprocess = (e) => {
+                            const input = e.inputBuffer.getChannelData(0);
+                            const pcm16 = new Int16Array(input.length);
+
+                            for (let i = 0; i < input.length; i++) {
+                                // Clamp float32 [-1, 1] → int16 [-32768, 32767]
+                                const sample = Math.max(-1, Math.min(1, input[i]));
+                                pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                            }
+
+                            if (socket && socket.readyState === WebSocket.OPEN) {
+                                socket.send(pcm16.buffer);
+                                totalBytes += pcm16.byteLength;
+                            }
+                        };
+
+                        // Now connect the audio graph (callback already set)
                         source.connect(processor);
 
                         // CRITICAL for iOS Safari: ScriptProcessorNode's onaudioprocess
@@ -280,9 +304,6 @@
                         const wsUrl = `${wsProto}://${addr.ip}:${addr.port}`;
                         socket = new WebSocket(wsUrl);
 
-                        let totalBytes = 0;
-                        const startTime = Date.now();
-
                         socket.onopen = () => {
                             // Send sample rate to server first (critical for sync!)
                             // Use audioContext.sampleRate, NOT mic hardware rate!
@@ -293,23 +314,6 @@
                             btn.textContent = 'Stop Streaming';
                             btn.className = 'btn btn-stop';
                             btn.disabled = false;
-
-                            // Step 4: Start sending audio
-                            processor.onaudioprocess = (e) => {
-                                const input = e.inputBuffer.getChannelData(0);
-                                const pcm16 = new Int16Array(input.length);
-
-                                for (let i = 0; i < input.length; i++) {
-                                    // Clamp float32 [-1, 1] → int16 [-32768, 32767]
-                                    const sample = Math.max(-1, Math.min(1, input[i]));
-                                    pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-                                }
-
-                                if (socket && socket.readyState === WebSocket.OPEN) {
-                                    socket.send(pcm16.buffer);
-                                    totalBytes += pcm16.byteLength;
-                                }
-                            };
 
                             // Update status periodically with bitrate info
                             const bitrateInterval = setInterval(() => {

@@ -104,11 +104,14 @@ class AudioServer:
                     try:
                         info = json.loads(message)
                         new_rate = info.get("sample_rate")
+                        print(f"  📊 Client reports: {new_rate} Hz")
                         if new_rate and new_rate != self.rate:
-                            print(f"  📊 Client reports {new_rate} Hz — adjusting playback")
+                            print(f"  ➡️  Adjusting playback from {self.rate} to {new_rate} Hz")
                             self.stream.close()
                             self.rate = new_rate
                             self.open_stream()
+                        else:
+                            print(f"  ✅ Playback at {self.rate} Hz (no change needed)")
                     except json.JSONDecodeError:
                         pass
                     metadata_received = True

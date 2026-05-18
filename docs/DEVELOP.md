@@ -778,16 +778,46 @@ HTTP + WSS ทั้งหมดบน port 8443 → iOS cert trust ตรงก
 ## 8. สิ่งที่ยังอยากทำต่อ (Roadmap)
 
 > miclink เวอร์ชัน 2.0.0 ใช้งานได้จริงและเสถียรแล้ว!
-> แต่ใบกับ Iris ก็มีไอเดียเพิ่มเติมสำหรับอนาคต:
+> แต่ใบกับ Iris ก็มีไอเดียสำหรับอนาคต — จัดลำดับตาม priority ที่แนะนำ
 
-- [ ] **🔬 AudioWorklet** — แทน ScriptProcessorNode ที่ deprecated (คุณภาพดีกว่า, หน่วงน้อยกว่า)
-- [ ] **📦 Docker/Portable** — ทำเป็นแพ็กเกจที่เปิดแล้วใช้ได้ทันที ไม่ต้องติดตั้ง Python
-- [ ] **📊 VU Meter** — แสดงระดับเสียงบนเว็บหน้า iPad
-- [ ] **🎛️ Volume Slider** — ปรับ gain จากหน้าเว็บ (ไม่ต้อง restart server)
-- [ ] **📱 PWA** — ทำให้เป็น App-like บน iPad (เปิดแล้วใช้เหมือนแอพ)
-- [ ] **🔇 Noise Gate** — ตัดเสียงพื้นหลังอัตโนมัติ
-- [ ] **⏱️ Latency Monitor** — แสดงค่าหน่วงแบบ real-time
-- [ ] **🌐 Discovery** — ค้นหา server อัตโนมัติ (Bonjour/mDNS)
+---
+
+### 🔥 Priority 1: "ของใกล้ตัว — ทำแล้วใช้ดีขึ้นทันที"
+
+| # | Feature | effort | impact | รายละเอียด |
+|---|---------|--------|--------|-----------|
+| 1 | **🎚️ Volume Slider บน iPad** | ⭐ 1 วัน | 🔥🔥🔥 | ตอนนี้ปรับ gain ได้แค่ `--gain` CLI — ถ้าเสียงดังไป/เบาไป ต้อง restart server  เปลี่ยนเป็น slider บน web-client ส่ง JSON `{"adjust_gain": 2.5}` → server ปรับแบบ real-time |
+| 2 | **📊 VU Meter** | ⭐ 1 วัน | 🔥🔥🔥🔥 | แสดงระดับเสียงเป็นแถบ animation บน iPad — ดู一秒 ก็รู้ว่าไมค์ทำงานหรือเปล่า, เสียงดังหรือเบา |
+| 3 | **📱 PWA (Installable App)** | ⭐ 3 ชม. | 🔥🔥🔥🔥🔥 | เพิ่ม `manifest.json` + service worker → บน iPad กด Add to Home Screen → เปิดเหมือนแอพ, ไม่ต้องพิมพ์ URL ทุกครั้ง |
+| 4 | **🔗 Server Dashboard** | ⭐ ครึ่งวัน | 🔥🔥🔥 | หน้า dashboard บน server แสดง clients ที่ connect, bitrate จริง, audio level, ว่ามีปัญหาอะไร — debug ง่ายขึ้น |
+
+### 🚀 Priority 2: "เทคนิค — แก้ปัญหาที่ต้นเหตุ"
+
+| # | Feature | effort | impact | รายละเอียด |
+|---|---------|--------|--------|-----------|
+| 5 | **🔬 AudioWorklet** | ⭐⭐ 2-3 วัน | 🔥🔥🔥🔥🔥 | แทนที่ ScriptProcessorNode (deprecated) → latency น้อยกว่า, CPU น้อยกว่า, **iOS quirks หายเกลี้ยง** (ไม่ต้องใช้ GainNode(0), ไม่ต้อง worry callback timing) |
+| 6 | **🔇 Noise Gate** | ⭐⭐ 1-2 วัน | 🔥🔥🔥🔥 | ตัดเสียงเงียบ / เสียงพื้นหลังอัตโนมัติ — เวลาเงียบจะไม่ส่ง data → ประหยัด bandwidth + เพื่อนใน Discord ได้ยินเราชัดขึ้น |
+| 7 | **🌐 Auto-discovery (mDNS)** | ⭐⭐⭐ 3-5 วัน | 🔥🔥🔥🔥🔥 | ไม่ต้องพิมพ์ IP! iPad หา server เจออัตโนมัติผ่าน Bonjour/Avahi — UX ดีขึ้นมหาศาล |
+
+### 💫 Priority 3: "ของใหญ่ — ไว้มีเวลา"
+
+| # | Feature | effort | impact | รายละเอียด |
+|---|---------|--------|--------|-----------|
+| 8 | **📦 Portable executable** | ⭐⭐ 1-2 วัน | 🔥🔥🔥🔥 | ใช้ PyInstaller ทำเป็นไฟล์ `.exe` ไฟล์เดียว — แจกเพื่อน: เปิดครั้งเดียวพร้อมใช้ ไม่ต้องติดตั้ง Python, ไม่ต้อง pip install |
+| 9 | **👥 Multi-client** | ⭐⭐⭐ 2-3 วัน | 🔥🔥🔥🔥🔥 | รองรับหลาย iPad / มือถือเชื่อมต่อพร้อมกัน — ทำอะไรได้เยอะ (podcast หลายคน, แชร์ไมค์, etc.) |
+| 10 | **🧠 Adaptive Buffer** | ⭐⭐⭐ 3-5 วัน | 🔥🔥🔥 | ปรับ buffer size อัตโนมัติตามสภาพ network — Wi-Fi ไม่เสถียร → buffer โตขึ้น (กันกระตุก), เสถียร → buffer เล็กลง (ลดหน่วง) |
+| 11 | **🌊 WebRTC** | ⭐⭐⭐⭐ 1-2 สัปดาห์ | 🔥🔥🔥🔥🔥 | latency ต่ำกว่า WebSocket, ปรับ bitrate อัตโนมัติ, echo cancellation ในตัว — แต่ complexity สูงมาก เหมาะสำหรับ miclink v3.0 |
+
+### คำแนะนำของ Iris
+
+```
+1️⃣ PWA + Volume Slider         ← ทำก่อน (1 วัน) → UX พลิกจาก "ต้องพิมพ์ URL" สู่ "แอพที่ปรับ volume ได้"
+2️⃣ AudioWorklet                ← ลงทุน 2-3 วัน → ตัด iOS bugs 15 commits เหลือ 0 commit
+3️⃣ Noise Gate                  ← เพื่อนใน Discord จะรู้สึกได้จริง — iPad noise หาย
+4️⃣ Auto-discovery              ← ทำให้ miclink ใช้ง่ายที่สุด — ไม่ต้องพิมพ์ IP อีกเลย
+```
+
+> ใบสนใจ feature ไหนเป็นพิเศษ หรือมีไอเดียอื่น ๆ เพิ่มเติม บอก Iris ได้เลยนะคะ 😊
 
 ---
 

@@ -310,72 +310,468 @@ VB-Cable มี 2 ด้าน:
 
 ---
 
-## 7. ของเล่นเทคนิค — เทคนิคเจ๋งๆ ที่ใช้
+## 7. เปิดกล่องเทคนิค — miclink ทำงานยังไง?
 
-### 7.1 AudioContext.sampleRate (แก้ sample rate ไม่ตรง)
+> ส่วนนี้จะอธิบาย **เบื้องหลังการทำงานของ miclink** ตั้งแต่เสียงเข้าไมค์ iPad จนถึง Discord
+> ใช้ภาษาที่คนไม่เขียนโปรแกรมก็พอเก็ท — แต่ก็ลงรายละเอียดเทคนิคให้คนเขียนโค้ดอ่านสนุก
 
-ตอนแรกใบใช้ `track.getSettings().sampleRate` (ค่า hardware) แต่ iOS Safari อาจคืนค่าเป็น undefined!
+---
+
+### 7.0 การเดินทางของเสียง 1 วินาที
+
+ก่อนจะลงลึกแต่ละเทคนิค มาดู **เส้นทางของเสียง** ตั้งแต่พูดใส่ iPad จนถึง Discord:
+
+```
+พูดใส่ iPad
+    ↓
+① Safari จับเสียงด้วย getUserMedia() 
+    → ไมค์ iPad แปลงคลื่นเสียงเป็นเลข (Float32)
+    ↓
+② AudioContext + ScriptProcessorNode
+    → แปลง Float32 → Int16 (PCM16)
+    → เก็บใน buffer (2048 ตัวอย่าง/ครั้ง)
+    ↓
+③ WebSocket (WSS) ส่งไปยังคอมผ่าน Wi-Fi
+    → ส่งเป็น binary frame (raw bytes)
+    → ไม่บีบอัด — 768 kbps ตลอดเวลา
+    ↓
+④ Python Server รับ data
+    → ขยายเสียง (Gain × 3.0)
+    → แปลง Mono → Stereo
+    ↓
+⑤ PyAudio ส่งไปยัง VB-Cable
+    → VB-Cable Input (device index 27)
+    ↓
+⑥ Discord อ่านจาก VB-Cable (Recording ด้าน)
+    → เพื่อนได้ยินเรา!!
+
+พูด 1 ประโยค = ข้อมูลเดินทาง 6 จุดนี้
+ทุกอย่างเกิดขึ้นภายใน ~50-100ms (หน่วงน้อยกว่าที่มนุษย์รู้สึก)
+```
+
+---
+
+### 7.1 WebSocket — ทำไมต้องใช้ และมันคืออะไร?
+
+#### HTTP vs WebSocket: เปรียบเทียบให้เห็นภาพ
+
+**HTTP ปกติ** (เวลาคุณเปิดเว็บ):
+
+```mermaid
+คุณ → ขอข้อมูล → เซิฟเวอร์
+              → ส่งกลับมา → ปิดสาย
+คุณ → ขอข้อมูล → เซิฟเวอร์  
+              → ส่งกลับมา → ปิดสาย
+```
+
+— เปิดสายเวลาโหลด ปิดเมื่อได้ข้อมูล  
+— เรียกเปิดใหม่ทุกครั้งที่ต้องการข้อมูล  
+— เหมือนโทรสั่งพิซซ่า: โทร→สั่ง→ได้รับ→วางสาย→เวลา餓โทรใหม่
+
+**WebSocket** (miclink ใช้):
+
+```mermaid
+คุณ → ขอเปิดสาย → เซิฟเวอร์
+              → ── data ──→ data ──→ data ──→ ...
+              → ── data ──→ data ──→ data ──→ ...
+              → เปิดสายไว้ตลอดไม่ปิด!!
+```
+
+— เปิดสายครั้งเดียว  
+— ข้อมูลไหลตลอดเวลา **ทั้งสองทิศทาง**  
+— เหมือนสายยางฉีดน้ำ: เปิดก๊อกแล้วน้ำไหลตลอด จนกว่าจะปิด
+
+> **ถ้าใช้ HTTP ส่งเสียง:** คุณต้องส่ง request → รอ response → ปิด → เปิดใหม่ → ส่งอีก   
+> → หน่วงมหาศาล! เพราะทุกครั้งที่เปิดสายมี overhead (ของแถม) เยอะ
+>
+> **ใช้ WebSocket:** เปิดสายครั้งเดียว → ส่ง data ได้ตลอด  
+> → latency (ค่าหน่วง) ต่ำมาก — เหมาะกับ real-time audio
+
+#### Handshake — การจับมือเปิดเส้นทาง
+
+WebSocket ไม่ได้เปิดสายมั่ว ๆ มีพิธีเปิดเส้นทางที่เรียกว่า **Handshake**:
+
+```
+iPad → ขอเปิด WebSocket (HTTP Upgrade header)
+     → "เฮ้ย Server! ฉันอยากเปลี่ยน protocol เป็น WebSocket นะ"
+
+Server → ตรวจสอบว่าเป็น WebSocket จริง
+       → "OK! เปลี่ยน protocol ให้"
+
+iPad → OK! ส่งข้อมูล binary ได้เลย!
+     → *ส่ง PCM16 audio bytes ไปตลอด*
+```
+
+ในโค้ดเราดูจาก header:
+
+```python
+# audio-server.py
+if request.headers.get("Upgrade", "").lower() == "websocket":
+    return None  # ให้ websockets library จัดการ
+```
+
+#### Binary vs Text Frames
+
+WebSocket ส่งข้อมูลได้ 2 แบบ:
+
+| ประเภท | ใช้กับ | ขนาด |
+|--------|-------|------|
+| **Text frame** | JSON metadata | เล็ก (ไม่กี่ byte) |
+| **Binary frame** | เสียง PCM16 | ใหญ่ (4096 bytes ทุก 42ms) |
+
+miclink ใช้ทั้งสองแบบ:
+1. ส่ง **JSON text frame** (`{"sample_rate": 48000}`) เป็นข้อความแรก
+2. จากนั้นส่ง **binary frame** (PCM16 audio data) ตลอดไป
+
+ข้อความแรก = metadata, หลังจากนั้น = raw audio bytes
+
+#### WSS — WebSocket ที่เข้ารหัส
+
+- `ws://` = WebSocket ปกติ (ไม่เข้ารหัส — เหมือนพูดกันสด ๆ)
+- `wss://` = WebSocket + SSL (เข้ารหัส — เหมือนกระซิบใส่เครื่องส่งวิทยุ)
+
+iOS บังคับว่าเว็บที่ใช้ไมค์ได้ ต้องเป็น HTTPS → WSS เท่านั้น!
+
+---
+
+### 7.2 getUserMedia + Web Audio API — จับเสียงจากเบราว์เซอร์
+
+นี่คือ **หัวใจของฝั่ง client** — ทำไม browser ถึงจับเสียงจากไมค์ได้?
+
+#### getUserMedia — ขออนุญาตใช้ไมค์
 
 ```javascript
-// ❌ ไม่ได้ผลบน iOS:
-const settings = track.getSettings();
-const rate = settings.sampleRate;  // undefined!
+const constraints = {
+    audio: {
+        sampleRate: 48000,         // ขอคุณภาพ 48kHz
+        channelCount: 1,           // mono (ไมค์คนเดียวพอ)
+        echoCancellation: false,   // ปิดตัดเสียงก้อง — ไม่อยากให้เสีย quality
+        noiseSuppression: false,   // ปิดตัดเสียงรบกวน
+        autoGainControl: true,     // เปิดปรับระดับอัตโนมัติ
+    }
+};
 
-// ✅ ใช้ AudioContext.sampleRate แทน:
-const audioContext = new AudioContext();
-const rate = audioContext.sampleRate;  // 44100 หรือ 48000
+navigator.mediaDevices.getUserMedia(constraints)
 ```
 
-แล้วส่งค่า `{sample_rate: audioContext.sampleRate}` เป็นข้อความแรกให้ server
-server ปรับ sample rate ตาม:
+เวลาคุณกด **Allow** บน iPad → browser สร้าง **MediaStream** ที่มี audio track อยู่ข้างใน
+
+#### Float32 → Int16 — ทำไมต้องแปลง?
+
+ไมค์ดิจิตอลบันทึกเสียงเป็น **Float32** (เลขทศนิยม, มีค่าตั้งแต่ -1.0 ถึง 1.0)
+
+แต่เราส่งผ่าน WebSocket ใช้ **Int16** (เลขจำนวนเต็ม 16-bit, -32768 ถึง 32767)
+
+**ทำไมต้องแปลง?**
+
+| รูปแบบ | ขนาด/ตัวอย่าง | แบบ |
+|--------|-------------|------|
+| Float32 | 4 bytes | -0.7342, 0.1234, -0.9921 |
+| Int16 | 2 bytes | -24067, 4044, -32505 |
+
+Int16 = ครึ่งหนึ่งของ Float32 = **แบนด์วิดท์น้อยลงครึ่งหนึ่ง**!
+
+การแปลง (ใน `web-client.html`):
+
+```javascript
+processor.onaudioprocess = (e) => {
+    const input = e.inputBuffer.getChannelData(0);  // Float32 [-1, 1]
+    const pcm16 = new Int16Array(input.length);
+
+    for (let i = 0; i < input.length; i++) {
+        const sample = Math.max(-1, Math.min(1, input[i]));  // clamp
+        pcm16[i] = sample < 0
+            ? sample * 0x8000     // 0x8000 = 32768 (ค่าลบ)
+            : sample * 0x7FFF;    // 0x7FFF = 32767 (ค่าบวก)
+    }
+
+    socket.send(pcm16.buffer);  // ส่ง raw binary!
+};
+```
+
+**clamp** = ถ้าค่าเกิน -1 ถึง 1 → ตัดให้อยู่ในช่วง (กันเสียงแตก / clipping)
+
+#### ScriptProcessorNode — ตัวกลางระหว่างเสียงกับโค้ด
+
+```javascript
+const bufferSize = 2048;
+processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+//                                     bufferSize  ↑ inputCh  ↑ outputCh
+
+processor.onaudioprocess = (e) => {
+    const input = e.inputBuffer.getChannelData(0);
+    // ฟังก์ชันนี้ถูกเรียกทุกครั้งที่มี buffer ใหม่
+    // bufferSize=2048 → ถูกเรียกทุก 2048/48000 = 42ms
+};
+```
+
+| bufferSize | ถูกเรียกทุก | ข้อดี | ข้อเสีย |
+|-----------|-----------|------|--------|
+| 1024 | ~21ms | หน่วงน้อย | ใช้ CPU มาก, iPad อาจไม่ไหว |
+| **2048** | **~42ms** | **สมดุล** | **ค่าเริ่มต้นของ miclink** |
+| 4096 | ~85ms | เสถียรสุด | หน่วงมาก, รู้สึกได้ |
+
+---
+
+### 7.3 Sample Rate Synchronization — ทำไม iOS เสียงเพี้ยน?
+
+#### ปัญหา
+
+ไมค์ iPad อาจเก็บเสียงที่ **48000 Hz** แต่เบราว์เซอร์ **AudioContext** อาจคืนค่าแค่ **44100 Hz**
+
+- iPad ส่ง 44100 Hz → คิดว่าส่ง 48000
+- Server เล่นที่ 48000 → ได้รับ 44100 → เล่นเร็วเกินไป → เสียงสูง / เพี้ยน
+
+#### วิธีแก้
+
+miclink ไม่เดา — client ส่ง **metadata ก่อนข้อมูลเสียง**:
+
+```javascript
+// client → server (text frame แรก):
+socket.send(JSON.stringify({ sample_rate: audioContext.sampleRate }));
+```
 
 ```python
+# server รับ metadata ก่อน:
+info = json.loads(message)     # {"sample_rate": 44100}
 new_rate = info.get("sample_rate")
+
 if new_rate and new_rate != self.rate:
-    self.stream.close()
-    self.rate = new_rate
-    self.open_stream()
+    self.stream.close()                 # ปิด stream เดิม
+    self.rate = new_rate                # เปลี่ยน sample rate
+    self.open_stream()                  # เปิด stream ใหม่ที่ rate ถูก
 ```
 
-### 7.2 process_request — รวม HTTP + WSS ในพอร์ตเดียว
+> ที่ใช้ **audioContext.sampleRate** แทน hardware rate (`track.getSettings().sampleRate`)
+> เพราะ iOS Safari ไม่ให้ค่า hardware rate จริง (return undefined)!
 
-ปกติ WebSocket และ HTTP ต้องแยก port กัน แต่ iOS ต้องการให้ cert trust ตรงกัน ใบเลยใช้ `process_request` callback เพื่อให้ server จัดการทั้ง HTTP และ WebSocket ในพอร์ตเดียว:
+---
 
-```python
-async def handle_http_request(self, connection, request):
-    # ถ้าเป็น WebSocket upgrade → return None (ให้ library จัดการ)
-    if request.headers.get("Upgrade", "").lower() == "websocket":
-        return None
-    # ถ้าเป็น HTTP ปกติ → serve static file
-    return Response(200, "OK", headers, body)
+### 7.4 GainNode(0) — iOS Safari Audio Graph Bug
+
+#### ปัญหา
+
+iOS Safari มีบั๊กที่ **ScriptProcessorNode จะไม่ยิง onaudioprocess เลย**
+ถ้า audio graph ไม่สมบูรณ์
+
+Audio graph คือสายต่อ:
+```
+Microphone → MediaStreamSource → ScriptProcessor → Destination (ลำโพง)
 ```
 
-### 7.3 Mono → Stereo ด้วย Bit Manipulation
+แต่ถ้าเราต่อ processor → destination ตรง ๆ:
+- iPad จะได้ยินเสียงตัวเองผ่านลำโพง **ดังมาก** (Audio Feedback!)
+- วน loop ไมค์→ลำโพง→ไมค์→ลำโพง → หวีด !
 
-VB-Cable ที่ 48000 Hz มีปัญหาเวลาเล่น mono ใบเลยเขียนฟังก์ชันแปลงด้วยมือ:
-
-```python
-def mono_to_stereo(mono_bytes, gain=3.0):
-    for i in range(0, len(mono_bytes), 2):
-        sample = mono_bytes[i] | (mono_bytes[i + 1] << 8)
-        # ... apply gain, clamp ...
-        # Duplicate to L and R
-        result[i * 2]     = sample & 0xFF       # L low byte
-        result[i * 2 + 1] = (sample >> 8) & 0xFF # L high byte
-        result[i * 2 + 2] = sample & 0xFF       # R low byte (same)
-        result[i * 2 + 3] = (sample >> 8) & 0xFF # R high byte (same)
-```
-
-### 7.4 GainNode(0) — แก้ iOS Safari Audio Graph Bug
-
-iOS Safari ต้องการให้ audio graph **ครบวงจร** (source → processor → destination) ถึงจะยิง onaudioprocess แต่ถ้าต่อ processor ตรงไป destination จะได้ยินเสียงตัวเองใน iPad ใบเลยใช้ GainNode(0) — เหมือนสวิตช์ปิด:
+#### วิธีแก้ — GainNode(0)
 
 ```javascript
 const silentGain = audioContext.createGain();
-silentGain.gain.value = 0;    // ปิดเสียง (ใบ้)
-processor.connect(silentGain);
-silentGain.connect(audioContext.destination);
+silentGain.gain.value = 0;        // ปิดเสียงสนิท (gain = 0)
+
+source.connect(processor);         // source → processor
+processor.connect(silentGain);     // processor → silent gain
+silentGain.connect(audioContext.destination);  // → destination (แต่เงียบ)
 ```
+
+เทียบกับชีวิตจริง:
+```
+GainNode(0) = สาย HDMI ต่อทีวี แต่กด mute
+             → สัญญาณเดินทางครบวงจร
+             → แต่ไม่มีเสียงออกลำโพง
+```
+
+#### ทำไมต้องตั้ง callback ก่อน connect?
+
+iOS Safari มีพฤติกรรมถ้าคุณ:
+
+```javascript
+// ❌ ผิด — iOS จะ garbled:
+source.connect(processor);        // ต่อ graph ก่อน
+processor.onaudioprocess = fn;    // ตั้ง callback ทีหลัง
+// → iOS เริ่มสะสม buffer ใน processor แล้ว
+// → buffer ที่สะสมมา = garbage data
+
+// ✅ ถูก:
+processor.onaudioprocess = fn;    // ตั้ง callback ก่อน
+source.connect(processor);        // แล้วค่อยต่อ graph
+// → processor พร้อมทำงานตั้งแต่แรก
+// → iOS ส่ง audio ที่ clean
+```
+
+---
+
+### 7.5 process_request — รวม HTTP + HTTPS + WSS ในพอร์ตเดียว
+
+#### ปัญหา
+
+iOS Safari trust SSL certificate **แยกตาม port**
+
+```
+เปิด https://192.168.1.100:8443/  → accept cert (trust ไว้)
+WebSocket wss://192.168.1.100:8765/ → ❌ ไม่ trust! cert คนละ port!
+```
+
+#### วิธีแก้ — Single Port
+
+ถ้า HTTP และ WSS **ใช้ port เดียวกัน** → cert trust ตรงกัน → iOS happy
+
+ปกติ WebSocket library (`websockets`) รองรับแค่ WS บนพอร์ตของตัวเอง  
+เราต้องเขียน **process_request** callback เพื่อดัก:
+
+```python
+async def handle_http_request(self, connection, request):
+    # Check: นี่คือ WebSocket upgrade request หรือเปล่า?
+    if request.headers.get("Upgrade", "").lower() == "websocket":
+        return None  # → ให้ websockets library จัดการ WebSocket
+
+    # ไม่ใช่ WebSocket → เป็น HTTP ปกติ → serve ไฟล์
+    path = request.path.lstrip("/")
+    if path == "" or path == "/":
+        path = "web-client.html"
+
+    body = full_path.read_bytes()
+    return Response(200, "OK", headers, body)
+```
+
+ขั้นตอน:
+
+```
+iPad → ขอเปิดหน้า web-client.html (HTTP) → process_request → ส่ง HTML กลับ
+iPad → ขอ upgrade เป็น WebSocket → process_request → ให้ library จัดการ
+```
+
+ทั้งสองอย่างบน **port 8443** เดียวกัน — cert ที่ trust ไว้ใช้ได้ทั้ง HTTP และ WebSocket
+
+---
+
+### 7.6 Mono → Stereo — เพราะ VB-Cable รับ mono ไม่ได้
+
+#### ปัญหา
+
+VB-Cable ที่ 48000 Hz มีบั๊กเมื่อรับ mono (1 channel)
+
+สาเหตุคือ **WASAPI mixer** ของ Windows — เมื่อได้รับ mono PCM16 ที่ 48000 Hz
+มันพยายามแปลงเป็น stereo อัตโนมัติ → แปลงห่วย → เสียงแตก / Garbled
+
+> ส่ง 44100 Hz mono = OK  
+> ส่ง 48000 Hz mono = ❌ แตก!  
+> ส่ง 48000 Hz stereo = ✅ สมบูรณ์
+
+#### วิธีแก้ — Bit-Level Conversion
+
+miclink ส่ง stereo **โดยเอา mono แทรก L และ R เหมือนกัน**:
+
+```python
+def mono_to_stereo(mono_bytes, gain=3.0):
+    result = bytearray(len(mono_bytes) * 2)  # ขนาดเท่าตัว
+
+    for i in range(0, len(mono_bytes), 2):
+        # อ่าน mono sample (16-bit little-endian)
+        sample = mono_bytes[i] | (mono_bytes[i + 1] << 8)
+
+        # ปรับ unsigned → signed
+        if sample >= 32768:
+            sample -= 65536
+
+        # apply gain + clamp
+        sample = int(sample * gain)
+        if sample > 32767: sample = 32767
+        if sample < -32768: sample = -32768
+
+        # ปรับกลับเป็น unsigned
+        if sample < 0: sample += 65536
+
+        # เขียน L และ R ด้วยค่าเดียวกัน
+        result[i * 2]     = sample & 0xFF       # L low byte
+        result[i * 2 + 1] = (sample >> 8) & 0xFF # L high byte
+        result[i * 2 + 2] = sample & 0xFF       # R low byte
+        result[i * 2 + 3] = (sample >> 8) & 0xFF # R high byte
+
+    return bytes(result)
+```
+
+มองเป็นภาพ: 
+```
+Mono:  [sample1] [sample2] [sample3] ...
+Stereo: [L=s1] [R=s1] [L=s2] [R=s2] [L=s3] [R=s3] ...
+```
+
+VB-Cable ได้ stereo → mixer ไม่ต้องแปลง → เสียงชัด!
+
+---
+
+### 7.7 Gain Boost — ขยายเสียง iPad ที่เงียบ
+
+#### ปัญหา
+
+iPad / iPhone มีไมค์คุณภาพดี แต่ **raw level** (ระดับเสียงดิบ) ที่ browser ส่งมาให้
+ต่ำมาก — เพราะ iOS ตั้ง auto gain control ไว้เผื่อที่ว่าง (headroom)
+
+ถ้าไม่ขยาย → Discord เพื่อนได้ยินเสียงเบาเหมือนกระซิบ
+
+#### วิธีแก้ — คูณเลข แล้ว clamp
+
+```python
+# --gain 3.0 = default
+sample = int(sample * gain)    # คูณ 3.0
+
+# Clamp — ไม่ให้เกิน limit 16-bit
+if sample > 32767:
+    sample = 32767
+elif sample < -32768:
+    sample = -32768
+```
+
+| --gain | volume | เหมาะกับ |
+|--------|--------|---------|
+| 1.0 | ปกติ | ไมค์ USB, ไมค์คอม |
+| 2.0 | ดังขึ้นนิด | iPad พูดปกติ |
+| **3.0** | **ดังขึ้น 3x** | **iPad ค่าเริ่มต้น (default)** |
+| 4.0 | ดังมาก | iPad พูดเบา / อยู่ไกล |
+| 5.0 | ดังสุด | เสี่ยง clipping |
+
+**Clipping (เสียงแตก)** = เมื่อเราเพิ่ม gain แล้ว sample เกิน 32767 หรือ ต่ำกว่า -32768
+→ ข้อมูลเสียงถูกตัดทิ้ง → เสียงแตก
+
+```python
+# clipping เกิดขึ้นเมื่อ:
+sample = 20000
+sample * 5.0 = 100000  # > 32767 → clamp → 32767
+# ข้อมูล detail ที่เกิน 32767 หายไป!
+```
+
+miclink เลือก default **3.0** เพราะ iPad mic raw level ต่ำมาก
+แต่ก็ปลอดภัยพอไม่ให้ clipping ถ้าพูดปกติ
+
+---
+
+### 7.8 ภาพรวม — ทุกเทคนิคทำงานร่วมกัน
+
+```
+iPad Safari:
+  getUserMedia → Float32 audio → clamp → Int16
+                                   ↓
+                   ส่ง {sample_rate} (JSON) ก่อน
+                                   ↓
+                   ส่ง PCM16 bytes (binary frame)
+                                   ↓
+                   ต่อ GainNode(0) ให้ iOS happy
+                                   ↓
+                   onaudioprocess callback set ก่อน connect
+
+Computer Server:
+                   รับ metadata → ตั้ง sample rate
+                   ↓
+                   รับ PCM16 → gain 3.0x → clamp → mono→stereo
+                   ↓
+                   PyAudio → VB-Cable → Discord
+
+HTTP + WSS ทั้งหมดบน port 8443 → iOS cert trust ตรงกัน
+```
+
+ทุกเทคนิคถูกออกแบบมาแก้ปัญหาเฉพาะที่เจอบน iOS + VB-Cable  
+ไม่มีเทคนิคไหน "เว่อร์" — ทุกบรรทัดมีที่มาที่ไป 😊
 
 ---
 

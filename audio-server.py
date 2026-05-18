@@ -22,6 +22,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from audio_utils import mono_to_stereo
+
 import websockets
 from websockets.http11 import Response, Headers
 import pyaudio
@@ -48,40 +50,7 @@ def find_device_by_name(p, name_substring):
     return None
 
 
-def mono_to_stereo(mono_bytes, gain=3.0):
-    """Convert mono PCM16 bytes to interleaved stereo PCM16 with gain boost.
-    
-    VB-Cable (device 27) produces garbled audio with mono output
-    at 48000 Hz. Sending native stereo (L/R duplicate) fixes it.
-    
-    gain: volume multiplier (2.0-4.0). Clamps to prevent clipping.
-    """
-    result = bytearray(len(mono_bytes) * 2)
-    for i in range(0, len(mono_bytes), 2):
-        # Read 16-bit signed little-endian sample
-        sample = mono_bytes[i] | (mono_bytes[i + 1] << 8)
-        # Convert from unsigned to signed (Python treats bytes as 0-255)
-        if sample >= 32768:
-            sample -= 65536
-        
-        # Apply gain boost
-        sample = int(sample * gain)
-        if sample > 32767:
-            sample = 32767
-        elif sample < -32768:
-            sample = -32768
-        
-        # Convert back to unsigned for byte packing
-        if sample < 0:
-            sample += 65536
-        
-        # Duplicate to L and R
-        result[i * 2] = sample & 0xFF
-        result[i * 2 + 1] = (sample >> 8) & 0xFF
-        result[i * 2 + 2] = sample & 0xFF
-        result[i * 2 + 3] = (sample >> 8) & 0xFF
-    return bytes(result)
-
+# mono_to_stereo() extracted to audio_utils.py — import at top of file
 
 # Audio settings
 CHUNK = 2048        # Buffer size — higher = more stable, lower = less latency

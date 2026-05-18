@@ -157,19 +157,22 @@ VB-Cable มี 2 ด้าน:
 │
 ├── 🐍 audio-server.py     ← ตัวหลัก! (ไฟล์เดียวจัดการทุกอย่าง)
 ├── 🌐 web-client.html      ← หน้าเว็บสำหรับเปิดบน iPad
-├── 🔬 diagnostic.html      ← หน้าทดสอบ (ไว้เช็คว่าไมค์ iPad ใช้ได้ไหม)
 │
 ├── 📝 README.md            ← คำอธิบายสั้น ๆ (ไว้ดูบน GitHub)
-├── 📝 GUIDE.md             ← คู่มือการใช้งานภาษาไทย
-├── 📝 DEVELOP.md           ← เอกสารนี้ (เรื่องราวการพัฒนา)
-├── 📝 KNOWLEDGE.md         ← ความรู้เทคนิค (สำหรับคนเขียนโปรแกรม)
+│
+├── 📁 docs/                ← เอกสารทั้งหมด
+│   ├── 📝 GUIDE.md         ← คู่มือการใช้งานภาษาไทย
+│   ├── 📝 DEVELOP.md       ← เอกสารนี้ (เรื่องราวการพัฒนา)
+│   └── 📝 KNOWLEDGE.md     ← ความรู้เทคนิค (สำหรับคนเขียนโปรแกรม)
+│
+├── 📁 debug/               ← เครื่องมือ debug & ทดสอบ
+│   ├── 🔬 diagnostic.html  ← หน้าทดสอบไมค์ iPad
+│   ├── 🧪 test-pyaudio.py  ← ทดสอบ PyAudio playback
+│   ├── 🧪 stereo-test.py   ← ทดสอบ mono vs stereo
+│   └── 🧪 rate-test.py     ← ทดสอบ sample rate
 │
 ├── ⚙️ .env                 ← ไฟล์ตั้งค่า (port, device index)
 ├── 📋 requirements.txt     ← รายการของที่ต้องติดตั้ง
-│
-├── 🧪 test-pyaudio.py      ← เครื่องมือทดสอบเสียง (ไว้ debug)
-├── 🧪 stereo-test.py       ← ทดสอบ mono vs stereo
-├── 🧪 rate-test.py         ← ทดสอบ sample rate 44100 vs 48000
 │
 ├── 📁 certs/               ← โฟลเดอร์เก็บกุญแจ SSL
 │   └── gen-cert.py         ← ตัวสร้างกุญแจ (รันครั้งเดียว)
@@ -262,18 +265,18 @@ VB-Cable มี 2 ด้าน:
 ### ระยะที่ 6: "เครื่องมือเสริม" 🧰
 
 ใบเพิ่มเครื่องมือสำหรับ debug และทดสอบ:
-- `test-pyaudio.py` — ทดสอบว่า PyAudio ทำงาน正常ไหม
-- `stereo-test.py` — ทดสอบ mono vs stereo ผ่าน VB-Cable
-- `rate-test.py` — ทดสอบ 44100 vs 48000 Hz
-- `diagnostic.html` — เปิดบน iPad เพื่อดูว่า ScriptProcessorNode 正常หรือไม่
+| `debug/test-pyaudio.py` — ทดสอบว่า PyAudio ทำงาน正常ไหม
+| `debug/stereo-test.py` — ทดสอบ mono vs stereo ผ่าน VB-Cable
+| `debug/rate-test.py` — ทดสอบ 44100 vs 48000 Hz
+| `debug/diagnostic.html` — เปิดบน iPad เพื่อดูว่า ScriptProcessorNode 正常หรือไม่
 - `--record diag.wav` — บันทึกเสียงไว้ฟังทีหลัง
 
 ### ระยะที่ 7: "บริการหลังการขาย" 📝
 
 ใบเขียนเอกสาร:
-- **KNOWLEDGE.md** — สรุปปัญหาที่เจอ (ไว้ดูเร็ว ๆ)
-- **GUIDE.md v2.0.0** — คู่มือภาษาไทยละเอียด (589 บรรทัด!)
-- **DEVELOP.md** — เอกสารนี้ (ไว้เล่าเรื่อง)
+- **docs/KNOWLEDGE.md** — สรุปปัญหาที่เจอ (ไว้ดูเร็ว ๆ)
+- **docs/GUIDE.md v2.0.0** — คู่มือภาษาไทยละเอียด (589 บรรทัด!)
+- **docs/DEVELOP.md** — เอกสารนี้ (ไว้เล่าเรื่อง)
 
 ### สรุปการเดินทางเป็นตัวเลข
 

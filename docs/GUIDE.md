@@ -64,11 +64,24 @@
 📁 miclink/
 ├── 📄 audio-server.py      ← ตัว server หลัก (ไฟล์ที่รัน)
 ├── 📄 web-client.html       ← หน้าเว็บสำหรับเปิดบนมือถือ
+├── 📄 README.md             ← คำอธิบายโปรเจกต์แบบสั้น
 ├── 📄 requirements.txt      ← รายการ dependencies ที่ต้องติดตั้ง
 ├── 📄 .env                  ← ค่าตั้งค่าต่าง ๆ (Port, Device, ฯลฯ)
 ├── 📄 .gitignore            ← บอก Git ว่าไม่ต้อง Track ไฟล์อะไรบ้าง
-├── 📄 GUIDE.md              ← คู่มือนี้ (ที่คุณกำลังอ่าน)
-├── 📄 README.md             ← คำอธิบายโปรเจกต์แบบสั้น
+├──
+├── 📁 docs/                 ← เอกสารทั้งหมด
+│   ├── 📄 GUIDE.md          ← คู่มือนี้ (ที่คุณกำลังอ่าน)
+│   ├── 📄 DEVELOP.md        ← เรื่องราวการพัฒนา
+│   └── 📄 KNOWLEDGE.md      ← ความรู้เทคนิค
+│
+├── 📁 debug/                ← เครื่องมือทดสอบและ debug
+│   ├── 📄 diagnostic.html   ← หน้าทดสอบ ScriptProcessorNode
+│   ├── 📄 test-pyaudio.py   ← ทดสอบ PyAudio playback
+│   ├── 📄 stereo-test.py    ← ทดสอบ mono vs stereo
+│   └── 📄 rate-test.py      ← ทดสอบ sample rate
+│
+├── 📁 certs/                ← ใบรับรอง SSL (สร้างครั้งแรกด้วย gen-cert.py)
+│
 └── 📁 .git/                 ← โฟลเดอร์ของ Git (ไม่ต้องแตะ)
 ```
 
@@ -82,6 +95,8 @@
 | `.env` | ตั้งค่าต่าง ๆ เช่น Port, Device | ✅ **ต้องแก้** ให้ตรงกับเครื่องคุณ |
 | `.gitignore` | บอก Git ว่าไม่ต้องอัปโหลดไฟล์อะไร (เช่น `.env`) | ❌ ไม่ต้องแก้ |
 | `README.md` | คำอธิบายสั้น ๆ สำหรับคนเปิด GitHub เจอ | ❌ ไม่ต้องแก้ |
+| `docs/` | โฟลเดอร์รวมเอกสาร (GUIDE.md, DEVELOP.md, KNOWLEDGE.md) | ❌ ไม่ต้องแก้ |
+| `debug/` | โฟลเดอร์รวมเครื่องมือทดสอบและ debug | ❌ ไม่ต้องแก้ |
 
 ---
 

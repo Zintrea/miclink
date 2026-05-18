@@ -82,10 +82,10 @@ Server ทำหน้าที่:
 |------|---------|
 | `audio-server.py` | Server หลัก — WebSocket + PyAudio + HTTPS/WSS on single port |
 | `web-client.html` | หน้าเว็บสำหรับเปิดบนมือถือ |
-| `test-pyaudio.py` | Test PyAudio playback (sine wave / WAV file) |
-| `diagnostic.html` | Diagnostic tool สำหรับ ScriptProcessorNode |
+| `debug/test-pyaudio.py` | Test PyAudio playback (sine wave / WAV file) |
+| `debug/diagnostic.html` | Diagnostic tool สำหรับ ScriptProcessorNode |
 | `certs/gen-cert.py` | สร้าง self-signed cert สำหรับ secure mode |
-| `GUIDE.md` | คู่มือภาษาไทยฉบับละเอียด |
+| `docs/GUIDE.md` | คู่มือภาษาไทยฉบับละเอียด |
 | `requirements.txt` | websockets, pyaudio, python-dotenv |
 
 ---
@@ -126,9 +126,9 @@ Settings → Voice & Video → Input Device → **CABLE Input (VB-Audio Virtual 
 | `python audio-server.py --secure --device 27 --gain 4.0` | เพิ่ม gain ถ้าเสียงเบา |
 | `python audio-server.py --secure --device 27 --record diag.wav` | บันทึกเสียงลง WAV |
 | `python audio-server.py --list-devices` | ดูอุปกรณ์เสียงทั้งหมด |
-| `python test-pyaudio.py` | ทดสอบ PyAudio กับ default output |
-| `python test-pyaudio.py --device 27` | ทดสอบกับ VB-Cable |
-| `python test-pyaudio.py --play diag.wav` | เล่นไฟล์ WAV ที่บันทึกไว้ |
+| `python debug/test-pyaudio.py` | ทดสอบ PyAudio กับ default output |
+| `python debug/test-pyaudio.py --device 27` | ทดสอบกับ VB-Cable |
+| `python debug/test-pyaudio.py --play diag.wav` | เล่นไฟล์ WAV ที่บันทึกไว้ |
 
 ---
 
